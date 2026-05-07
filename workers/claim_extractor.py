@@ -83,16 +83,23 @@ class ClaimExtractor:
 
 
 def _extract_wikitext_section(wikitext: str, section_name: str) -> str | None:
-    """Extract raw wikitext for a named section (first 2000 chars)."""
+    """Extract raw wikitext for a named section (up to 4000 chars)."""
     import re
+    # Lead has no heading in wikitext — extract everything before the first == heading
+    if section_name == "Lead":
+        first_heading = re.search(r"^==", wikitext, re.MULTILINE)
+        end = first_heading.start() if first_heading else len(wikitext)
+        return wikitext[:end][:4000] or None
+
     # Match section header at any level
     pattern = rf"==+\s*{re.escape(section_name)}\s*==+"
-    match = re.search(pattern, wikitext)
+    match = re.search(pattern, wikitext, re.MULTILINE)
     if not match:
         return None
     start = match.start()
-    # Find next same-or-higher-level heading
     level = len(re.match(r"(=+)", match.group()).group(1))
-    next_heading = re.search(r"^={1," + str(level) + r"}[^=]", wikitext[start + 1:], re.MULTILINE)
-    end = start + 1 + next_heading.start() if next_heading else len(wikitext)
-    return wikitext[start:end][:2000]
+    # Search for next same-or-higher heading starting after the current heading line
+    after_heading = wikitext.find("\n", start) + 1
+    next_heading = re.search(r"^={1," + str(level) + r"}[^=]", wikitext[after_heading:], re.MULTILINE)
+    end = after_heading + next_heading.start() if next_heading else len(wikitext)
+    return wikitext[start:end][:4000]

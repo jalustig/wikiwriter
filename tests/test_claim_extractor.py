@@ -2,7 +2,7 @@
 # ABOUTME: Tests section filtering, claim deduplication, and output structure.
 
 from models import WikiArticle, ImprovementPlan, SectionPlan, Claim
-from workers.claim_extractor import ClaimExtractor, _sections_to_analyze, _deduplicate_claims
+from workers.claim_extractor import ClaimExtractor, _sections_to_analyze, _deduplicate_claims, _extract_wikitext_section
 
 
 def _make_article(sections=None, section_texts=None) -> WikiArticle:
@@ -116,6 +116,45 @@ def test_deduplicate_preserves_order():
 
 def test_deduplicate_empty():
     assert _deduplicate_claims([]) == []
+
+
+# --- _extract_wikitext_section ---
+
+_SAMPLE_WIKITEXT = """\
+A service star is a miniature bronze star.<ref name="AR600">AR 600-8-22.</ref>
+It is authorized for wear on ribbons.<ref name="AR600"/>
+
+==Service stars==
+Service stars are authorized for expeditionary medals.<ref>{{cite web|url=http://example.com|title=Example}}</ref>
+
+==Campaign stars==
+Campaign stars are worn on campaign medals.<ref name="AR600"/>
+"""
+
+
+def test_extract_lead_section_returns_wikitext_before_first_heading():
+    result = _extract_wikitext_section(_SAMPLE_WIKITEXT, "Lead")
+    assert result is not None
+    assert "<ref" in result
+    assert "==Service stars==" not in result
+
+
+def test_extract_named_section_includes_citations():
+    result = _extract_wikitext_section(_SAMPLE_WIKITEXT, "Service stars")
+    assert result is not None
+    assert "==Service stars==" in result
+    assert "<ref>" in result
+    assert "==Campaign stars==" not in result
+
+
+def test_extract_section_does_not_bleed_into_next():
+    result = _extract_wikitext_section(_SAMPLE_WIKITEXT, "Service stars")
+    assert "Campaign stars" not in result
+
+
+def test_extract_missing_section_returns_none():
+    result = _extract_wikitext_section(_SAMPLE_WIKITEXT, "Nonexistent")
+    assert result is None
 
 
 # --- ClaimExtractor structural tests ---
