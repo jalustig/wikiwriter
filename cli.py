@@ -66,19 +66,61 @@ def _print_assessment(assessment: ArticleAssessment) -> None:
             print(f"    ✓  {s.name:<40} SKIP — {s.rationale}")
 
 
+def _dag_layers(dag: dict) -> list[list[str]]:
+    """Group DAG node IDs into topological depth layers."""
+    depths: dict[str, int] = {}
+
+    def depth(nid: str) -> int:
+        if nid in depths:
+            return depths[nid]
+        deps = dag[nid].get("deps", [])
+        depths[nid] = (1 + max(depth(d) for d in deps)) if deps else 0
+        return depths[nid]
+
+    for nid in dag:
+        depth(nid)
+
+    max_d = max(depths.values(), default=0)
+    layers: list[list[str]] = [[] for _ in range(max_d + 1)]
+    for nid, d in sorted(depths.items()):
+        layers[d].append(nid)
+    return layers
+
+
 def _print_dag(dag: dict, narrative: str) -> None:
     _sep("Task DAG")
     if not dag:
         print("  (empty)")
         return
 
-    # Topological sort for display
-    nodes = {nid: data for nid, data in dag.items()}
+    layers = _dag_layers(dag)
+    inner = _W - 4  # usable width inside the box borders
 
-    for nid, node in nodes.items():
-        deps = f"  ← {', '.join(node['deps'])}" if node.get('deps') else ""
-        params_str = ", ".join(f"{k}={v}" for k, v in node.get('params', {}).items())
-        print(f"  {nid:<4} {node['type']}({params_str}){deps}")
+    for i, layer in enumerate(layers):
+        # Build one display line per node in this layer
+        lines = []
+        for nid in layer:
+            node = dag[nid]
+            params_str = "  ".join(f"{k}={v}" for k, v in node.get("params", {}).items())
+            label = f"[{nid}]  {node['type']}"
+            if params_str:
+                label += f"  {params_str}"
+            deps = node.get("deps", [])
+            if deps:
+                label += f"  ← {', '.join(deps)}"
+            lines.append(label)
+
+        # Print layer box
+        print(f"  ┌{'─' * inner}┐")
+        for line in lines:
+            print(f"  │  {line:<{inner - 2}}│")
+        print(f"  └{'─' * inner}┘")
+
+        # Arrow to next layer
+        if i < len(layers) - 1:
+            mid = inner // 2 + 2
+            print(f"  {' ' * mid}│")
+            print(f"  {' ' * mid}▼")
 
     print(f"\n  Plan: {narrative}")
 
