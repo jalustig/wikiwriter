@@ -285,9 +285,6 @@ def run_and_render(url: str) -> None:
             icon, running_label, done_label = STAGE_META.get(stage, ("•", stage, stage))
 
             if stage not in stage_widgets:
-                # Collapse the previous completed stage now that a new one starts
-                if prev_stage:
-                    stage_widgets[prev_stage[0]].update(expanded=False)
                 stage_widgets[stage] = st.status(f"{icon} {running_label}", expanded=True)
             widget = stage_widgets[stage]
 
@@ -299,9 +296,12 @@ def run_and_render(url: str) -> None:
                 else:
                     widget.markdown(event.message)
             elif event.status == "done":
+                # Collapse the previous stage now that this one has finished
+                if prev_stage:
+                    stage_widgets[prev_stage[0]].update(expanded=False)
                 widget.update(
                     label=f"{icon} {done_label} — {event.message}",
-                    state="complete", expanded=True,  # stays open until next stage
+                    state="complete", expanded=True,  # stays open until the stage after this completes
                 )
                 prev_stage[:] = [stage]
                 if event.data:
