@@ -22,13 +22,32 @@ The differentiating insight: **the system understands the article's editorial en
 
 ---
 
+## Challenges Expected
+
+The actual workflow is straightforward (even if there are a lot of moving parts), the risk is that we will not be *reliable*, due to:
+
+- Inability to pull web page contents (CAPTCHAs, paywalls)
+- Inability to process web page HTML (too messy!)
+- Latency of LLM calls
+- Latency of HTTP requests
+- Running out of credits with OpenAI, Tavily, and other resources
+- Code complexity getting out of control!
+
+We need to make the system robust and also fast to iterate. That is why we have the caching system, during implementation caching is critical because it allows the test iterations to run quickly rather than take a long time we can skip to the next stage. However, it's critical that we cache properly: for instance if we cache an LLM response, we need to use (a hash of) the prompt as the key so that if we re-run the agent from the beginning, it doesn't have to call the same LLM prompt.
+
+NOTE: We must also write defensive code with unit tests. That way, we know that each stage is working properly.
+The most importnat unit tests are going to be around *planning*, because what will happen is that if we do not get a good plan - then we will not do the work properly. The plan is the core of the agentic workflow and it is what MAKES this an agent.
+
+
+---
+
 ## Stack
 
 ```
 UI:          Streamlit  (live progress + final review in one app)
-Agent calls: Anthropic Python SDK
-             - claude-sonnet-4-6  →  all workers (draft, grade, plan, extract)
-             - claude-opus-4      →  critic only (different model family)
+Agent calls: OpenAI Python SDK
+             - gpt-5.4-mini  →  all workers (draft, grade, plan, extract)
+             - gpt-5.5       →  critic only (different model family)
 Async:       asyncio + anyio (Streamlit-compatible async execution)
 HTTP:        httpx  (async fetching for all external URLs)
 Parsing:     beautifulsoup4  (HTML → readable text for source evaluation)
@@ -67,13 +86,13 @@ wikiwriter/
 │   ├── source_evaluator.py  # Unified: fetch + read + grade any URL
 │   ├── source_discovery.py  # New source finder (wraps Tavily + evaluator)
 │   ├── draft_writer.py      # Section editor
-│   ├── critic.py            # Evaluator — claude-opus-4
+│   ├── critic.py            # Evaluator — gpt-5.4
 │   └── output_grader.py     # Scores final draft, same rubric as grader
 ├── tools/
 │   ├── wikipedia.py         # MediaWiki API: article, history, talk page
 │   ├── wayback.py           # waybackpy wrapper — newest snapshot lookup for dead URLs
 │   ├── search.py            # Tavily wrapper
-│   └── fetcher.py           # httpx fetch → BeautifulSoup → clean text
+│   └── fetcher.py           # httpx fetch → BeautifulSoup → clean text (should cache both raw HTML and clean text!)
 ├── cache.py                 # diskcache setup and helpers
 ├── models.py                # Pydantic schemas for all worker I/O
 ├── prompts/                 # One .txt file per worker
@@ -97,7 +116,7 @@ wikiwriter/
 
 | API | Purpose | Auth | Cost |
 |-----|---------|------|------|
-| **Anthropic API** | All LLM calls | `ANTHROPIC_API_KEY` | Pay per token |
+| **OpenAI API** | All LLM calls | `OPENAI_API_KEY` | Pay per token |
 | **Tavily API** | Web search for source discovery | `TAVILY_API_KEY` | Free tier: 1000 searches/month |
 | **MediaWiki REST API** | Article content, edit history, talk pages | None — public | Free |
 | **Wayback Machine CDX API** | Check archived snapshots of dead URLs (via waybackpy) | None — public | Free |
@@ -108,7 +127,7 @@ wikiwriter/
 # requirements.txt
 
 # Core
-anthropic>=0.40.0          # Anthropic SDK with streaming support
+openai>=2.35.0             # OpenAI SDK
 streamlit>=1.35.0          # UI + live progress
 pydantic>=2.0.0            # Typed data models
 python-dotenv>=1.0.0       # .env loading
@@ -143,6 +162,10 @@ anyio>=4.0.0               # Async compatibility layer for Streamlit
 
 All expensive external operations are cached. The cache key is always a deterministic hash of the inputs so identical requests never hit the network twice.
 
+When caching LLM outputs, we should create the cache key as a hash of: model name, prompt, input parameters (e.g. page contents)
+
+The actual cached value should be a python dictionary which has the non-hashed inputs (so we can have observability into what we are looking at in the cache) and then "cached_value" which stores what we are actually caching. 
+
 ```python
 # cache.py
 
@@ -174,14 +197,14 @@ def cached(namespace: str):
 
 | Cache Namespace | What | TTL | Reason |
 |----------------|------|-----|--------|
-| `page_fetch` | Raw HTML of any fetched URL | 24h | Fetching the same source URL in two different pipeline runs should not hit the network twice |
-| `page_text` | BeautifulSoup-cleaned text of a fetched page | 24h | Parsing is cheap but redundant if fetch is cached |
+| `page_fetch` | Raw HTML of any fetched URL | 7d | Fetching the same source URL in two different pipeline runs should not hit the network twice |
+| `page_text` | BeautifulSoup-cleaned text of a fetched page | 7d | Parsing is cheap but redundant if fetch is cached |
 | `source_eval` | Full LLM source evaluation of a URL | 7d | Source quality of a given URL is stable over days; no reason to re-evaluate |
-| `wayback` | Wayback Machine availability result for a URL | 24h | The archive either has it or it doesn't |
+| `wayback` | Wayback Machine availability result for a URL | 7d | The archive either has it or it doesn't |
 | `wiki_article` | Full article wikitext | 1h | Articles change; shorter TTL |
 | `wiki_history` | Edit history (last 500 edits) | 1h | Same |
 | `wiki_talkpage` | Talk page content | 1h | Same |
-| `search_results` | Tavily search results for a query | 6h | Same search query in the same session should not burn API quota |
+| `search_results` | Tavily search results for a query | 48h | Same search query in the same session should not burn API quota |
 
 Usage throughout the workers is transparent:
 
@@ -205,11 +228,19 @@ async def fetch_readable(url: str) -> str:
     return soup.get_text(separator="\n", strip=True)[:8000]  # token budget
 ```
 
+Notes on fetcher:
+
+- It should fall back to Playwright if we get a CAPTCHA or if it is unable to render e.g. due to Javascript
+
 ---
 
 ## Source Evaluator — Unified Worker
 
 There is no separate domain classifier tool. Any URL — whether an existing citation being audited or a candidate found during source discovery — goes through the same `SourceEvaluator` worker. The worker fetches the page, reads it, and asks an LLM to evaluate it holistically as a potential Wikipedia source.
+
+Note that the source evaluator must ALSO extract relevant information from the page related to the article topic.
+
+Further, if the source is a PDF (or if it is an article which has a PDF copy for download), then we must call another tool which translates the PDF into a text form so that we can extract information from the document.
 
 ```python
 # workers/source_evaluator.py
@@ -269,17 +300,20 @@ class SourceEvaluator:
             context=context,
             status=status,
         )
-        response = await anthropic_call(model=DRAFT_MODEL, prompt=prompt)
+        response = await openai_call(model=DRAFT_MODEL, prompt=prompt)
         return SourceEvaluation.model_validate_json(response)
 ```
 
 ### Source Evaluator Prompt
 
 ```
-You are evaluating a web page as a potential Wikipedia source.
+You are evaluating a web page as a potential Wikipedia source. You must evaluate the claim considered here, AND output any additional claims which may be relevant to the article that we are editing.
 
 URL: {url}
 STATUS: {status}  (LIVE / ARCHIVED)
+
+ARTICLE EDITING:
+{article title}
 
 CLAIM TO SUPPORT:
 {claim}
@@ -339,9 +373,14 @@ Return only valid JSON:
   "publication": "...",
   "publication_date": "...",
   "claim_support_summary": "...",
-  "recommendation": "USE / WEAK / REJECT"
+  "recommendation": "USE / WEAK / REJECT",
+  "further_claims": [
+      <list of other relevant claims coming from this article>
+  ]
 }
 ```
+
+Note that we should not use the "score" blindly, but we should have the LLM evaluate these signals on 3 axes: trustworthiness, accuracy, relevance
 
 ---
 
@@ -402,7 +441,7 @@ async def run(self, url: str):
     # ... etc
 
     yield ProgressEvent(stage="CRITIQUE", status="running",
-        message=f"Running critique (claude-opus-4)...")
+        message=f"Running critique (gpt-5.5)...")
     critique = await self.workers.critic.run(assembled_draft, source_report)
     yield ProgressEvent(stage="CRITIQUE", status="done",
         message=f"Critique verdict: {critique.overall_verdict}",
@@ -735,7 +774,7 @@ class WikiWriterOrchestrator:
 
         # Stage 7: Critique loop (max 2 revisions)
         yield ProgressEvent(stage="CRITIQUE", status="running",
-            message="Running critique (claude-opus-4)...")
+            message="Running critique (gpt-5.5)...")
         critique, final_draft = await self.critique_loop(assembled, source_report)
         yield ProgressEvent(stage="CRITIQUE", status="done",
             message=f"Verdict: {critique.overall_verdict}",
@@ -831,7 +870,7 @@ Stop at any level — each is a complete, demoable artifact.
 **Level 3 — Full quality loop**
 - Claim extractor
 - Draft writer (section-level, parallel)
-- Critic (claude-opus-4, different model)
+- Critic (gpt-5.5, different model)
 - Diff view in Streamlit
 
 *Demonstrates: evaluator-optimizer loop + cross-model critique.*
@@ -848,9 +887,9 @@ Stop at any level — each is a complete, demoable artifact.
 
 ```bash
 # .env
-ANTHROPIC_API_KEY=
-DRAFT_MODEL=claude-sonnet-4-6
-CRITIC_MODEL=claude-opus-4          # must differ from DRAFT_MODEL
+OPENAI_API_KEY=
+DRAFT_MODEL=gpt-5.4-mini
+CRITIC_MODEL=gpt-5.5          # must differ from DRAFT_MODEL
 TAVILY_API_KEY=
 CACHE_DIR=.wikiwriter_cache         # diskcache directory
 CACHE_TTL_PAGE=86400                # 24h in seconds
@@ -875,7 +914,7 @@ CACHE_TTL_WIKI=3600                 # 1h for article/history/talk page
 > Each worker has a distinct role that benefits from a clean context. Mixing citation verification with claim extraction with critique in a single prompt produces worse results than isolating them. The decomposition also makes parallelization natural — independent tasks run simultaneously without contaminating each other's context.
 
 **"Why a different model for the critic?"**
-> If the same model writes the draft and evaluates it, they share the same systematic tendencies. Using claude-opus-4 to critique work done by claude-sonnet-4-6 makes the critique genuinely adversarial. They are different model families with different training dynamics.
+> If the same model writes the draft and evaluates it, they share the same systematic tendencies. Using gpt-5.5 to critique work done by gpt-5.4-mini makes the critique genuinely adversarial. They are different model families with different training dynamics.
 
 **"What makes this genuinely agentic?"**
 > The planner makes a different decision for every article based on two independent signals. The worker budget is determined at runtime. The critique loop terminates conditionally. The cache changes which work actually gets done on any given run. These are not fixed templates — they are decisions made in response to what the system finds.
