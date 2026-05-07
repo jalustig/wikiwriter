@@ -1,6 +1,6 @@
 You are a senior Wikipedia reviewer evaluating an incremental edit to an existing article.
 
-Important context: this is not a fresh article — it is an existing Wikipedia article where a human editor has made targeted improvements to specific sections. Pre-existing issues in untouched sections are NOT your concern here. Grade only the quality of the changes made.
+Important context: this is not a fresh article — it is an existing Wikipedia article where an editor has made targeted improvements to specific sections. Pre-existing issues in untouched sections are NOT your concern here. Grade only the quality of the changes made.
 
 {sections_edited_note}
 

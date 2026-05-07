@@ -274,7 +274,7 @@ class WikiWriterOrchestrator:
                     audit_results.append(result)
                     r = result
                     if r.status == "DEAD":
-                        yield _think("SOURCES", f"Dead link: {r.url[:60]}")
+                        yield _think("SOURCES", f"Dead link: {r.url}")
                     else:
                         note = r.claim_support_summary[:70] if r.claim_support_summary else ""
                         msg = f"{r.domain_type} [{r.overall_score:.1f}] → {r.recommendation}"
@@ -284,7 +284,7 @@ class WikiWriterOrchestrator:
                     for s in result:
                         yield _think("SOURCES", (
                             f"New source: {s.domain_type} [{s.overall_score:.1f}] "
-                            f"— {s.claim_support_summary[:60]}"
+                            f"— {s.claim_support_summary[:160]}"
                         ))
 
             yield ProgressEvent(
@@ -327,7 +327,7 @@ class WikiWriterOrchestrator:
             message=f"Writing {n_edit} section drafts...",
         )
         for s in plan.sections_to_edit:
-            yield _think("DRAFT", f"Drafting '{s.name}' — {', '.join(s.modes)}: {s.rationale[:80]}")
+            yield _think("DRAFT", f"Drafting '{s.name}' — {', '.join(s.modes)}: {s.rationale}")
 
         draft_tasks = [
             self.draft_writer.run(
@@ -455,11 +455,11 @@ class WikiWriterOrchestrator:
 
         for dim in passed_dims:
             events.append(_think("CRITIQUE", (
-                f"✓ {dim.replace('_', ' ').title()}: {critique.dimension_results[dim].notes[:80]}"
+                f"✓ {dim.replace('_', ' ').title()}: {critique.dimension_results[dim].notes}"
             )))
         for dim in failed_dims:
             events.append(_think("CRITIQUE", (
-                f"✗ {dim.replace('_', ' ').title()}: {critique.dimension_results[dim].notes[:80]}"
+                f"✗ {dim.replace('_', ' ').title()}: {critique.dimension_results[dim].notes}"
             )))
 
         if critique.overall_verdict == "PASS":

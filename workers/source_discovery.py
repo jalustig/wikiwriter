@@ -7,9 +7,19 @@ from models import SourceEvaluation
 from tools.search import search
 from workers.source_evaluator import SourceEvaluator
 
+BAD_SOURCES = [
+    "wikimedia.org",
+    "wikipedia.org",
+    "grokipedia.com",
+    "fandom.com",
+    "facebook.com",
+]
 
 def _is_allowed_source_url(url: str) -> bool:
-    return "wikimedia.org" not in url and "wikipedia.org" not in url
+    for source in BAD_SOURCES:
+        if source in url:
+            return False
+    return True
 
 
 class SourceDiscovery:
