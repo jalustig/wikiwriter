@@ -1,5 +1,5 @@
-# ABOUTME: Streamlit app — live pipeline progress and edit proposal review UI.
-# ABOUTME: Grows incrementally across milestones; each milestone adds new panels.
+# ABOUTME: Streamlit app — live progress and edit proposal review UI.
+# ABOUTME: Streams events from the orchestrator in real time; renders results incrementally.
 
 import asyncio
 import difflib
@@ -29,14 +29,14 @@ MODE_SHORT = {
 }
 
 STAGE_LABELS = {
-    "FETCH": "Fetch article",
-    "INTAKE": "Grade & analyze",
-    "PLAN": "Plan edits",
-    "CLAIMS": "Extract claims",
-    "SOURCES": "Audit & discover sources",
-    "DRAFT": "Draft sections",
-    "CRITIQUE": "Critique draft",
-    "GRADE": "Grade output",
+    "FETCH":    ("🌐", "Reading article"),
+    "INTAKE":   ("📊", "Assessing quality"),
+    "PLAN":     ("🗺️",  "Planning edits"),
+    "CLAIMS":   ("🔎", "Tagging claims"),
+    "SOURCES":  ("🔍", "Evaluating sources"),
+    "DRAFT":    ("✏️",  "Writing drafts"),
+    "CRITIQUE": ("🔬", "Reviewing draft"),
+    "GRADE":    ("📈", "Scoring output"),
 }
 
 RISK_COLORS = {
@@ -45,36 +45,6 @@ RISK_COLORS = {
     "HIGH": "red",
     "CRITICAL": "red",
 }
-
-
-def run_pipeline_sync(url: str) -> list[ProgressEvent]:
-    """Run the async pipeline and collect events synchronously for Streamlit."""
-    events: list[ProgressEvent] = []
-
-    async def collect():
-        async for event in WikiWriterOrchestrator().run(url):
-            events.append(event)
-
-    asyncio.run(collect())
-    return events
-
-
-def render_progress(events: list[ProgressEvent]) -> None:
-    st.subheader("Pipeline Progress")
-    seen_stages: dict[str, ProgressEvent] = {}
-    for event in events:
-        seen_stages[event.stage] = event
-
-    for stage_key, label in STAGE_LABELS.items():
-        event = seen_stages.get(stage_key)
-        if event is None:
-            st.write(f"⬜ {label}")
-        elif event.status == "running":
-            st.write(f"🔄 {label}: {event.message}")
-        elif event.status == "done":
-            st.write(f"✅ {label}: {event.message}")
-        elif event.status == "error":
-            st.write(f"❌ {label}: {event.message}")
 
 
 def render_risk_panel(risk: EditorialRiskProfile) -> None:
@@ -305,45 +275,62 @@ def render_claim_map(claim_map: ClaimMap) -> None:
 def main():
     st.set_page_config(page_title="WikiWriter", layout="wide")
     st.title("WikiWriter")
+    st.caption("Quality-first Wikipedia editing agent")
 
     url = st.text_input(
         "Wikipedia article URL",
         placeholder="https://en.wikipedia.org/wiki/Service_star",
     )
-    analyse = st.button("Analyse")
+    analyse = st.button("Analyse & draft edit", type="primary")
 
     if not analyse or not url:
         return
 
-    with st.spinner("Running pipeline…"):
-        events = run_pipeline_sync(url)
+    # Set up one live placeholder per stage; updated as events stream in
+    st.subheader("What I'm doing")
+    progress_container = st.container()
+    stage_placeholders = {stage: progress_container.empty() for stage in STAGE_LABELS}
 
-    render_progress(events)
+    # Collected as events arrive
+    collected: dict = {"events": [], "final_data": {}}
 
-    # Extract final data from PLAN done event
-    plan_event = next(
-        (e for e in reversed(events) if e.stage == "PLAN" and e.status == "done"),
-        None,
-    )
-    intake_event = next(
-        (e for e in reversed(events) if e.stage == "INTAKE" and e.status == "done"),
-        None,
-    )
+    async def stream():
+        async for event in WikiWriterOrchestrator().run(url):
+            collected["events"].append(event)
+            if event.data:
+                collected["final_data"].update(event.data)
+            icon, label = STAGE_LABELS.get(event.stage, ("•", event.stage))
+            ph = stage_placeholders.get(event.stage)
+            if ph is None:
+                continue
+            if event.status == "running":
+                ph.info(f"{icon} **{label}** — {event.message}")
+            elif event.status == "done":
+                ph.success(f"{icon} **{label}** — {event.message}")
+            elif event.status == "error":
+                ph.error(f"{icon} **{label}** — {event.message}")
+
+    asyncio.run(stream())
+
+    events: list[ProgressEvent] = collected["events"]
+    final_data: dict = collected["final_data"]
+
+    if not events:
+        st.error("No events received — check that the URL is a valid Wikipedia article.")
+        return
+
+    # Extract structured results from accumulated events
+    intake_event = next((e for e in reversed(events) if e.stage == "INTAKE" and e.status == "done"), None)
+    plan_event = next((e for e in reversed(events) if e.stage == "PLAN" and e.status == "done"), None)
 
     if not intake_event or not plan_event:
-        st.error("Pipeline did not complete successfully.")
+        st.error("Agent did not complete the planning phase.")
         return
 
     risk = EditorialRiskProfile.model_validate(intake_event.data["risk"])
     grade = ContentGrade.model_validate(intake_event.data["grade"])
     plan = ImprovementPlan.model_validate(plan_event.data["plan"])
     article = WikiArticle.model_validate(plan_event.data["article"])
-
-    # Accumulate final_data from all SOURCES done events
-    final_data: dict = {}
-    for event in events:
-        if event.stage == "SOURCES" and event.status == "done" and event.data:
-            final_data.update(event.data)
 
     st.divider()
     render_risk_panel(risk)
@@ -355,21 +342,13 @@ def main():
     st.subheader("Improvement Plan")
     render_plan_chart(article, grade, plan, risk)
 
-    # Extract claim map if available
-    claims_event = next(
-        (e for e in reversed(events) if e.stage == "CLAIMS" and e.status == "done"),
-        None,
-    )
+    claims_event = next((e for e in reversed(events) if e.stage == "CLAIMS" and e.status == "done"), None)
     if claims_event and claims_event.data:
         st.divider()
         claim_map = ClaimMap.model_validate(claims_event.data["claim_map"])
         render_claim_map(claim_map)
 
-    # Render draft diff view
-    draft_event = next(
-        (e for e in reversed(events) if e.stage == "DRAFT" and e.status == "done"),
-        None,
-    )
+    draft_event = next((e for e in reversed(events) if e.stage == "DRAFT" and e.status == "done"), None)
     if draft_event and draft_event.data:
         st.divider()
         render_diff_view(draft_event.data.get("section_drafts", []))
@@ -394,10 +373,8 @@ def main():
                 if s.get("claim_support_summary"):
                     st.caption(f"   {s['claim_support_summary']}")
 
-    # Final proposal panel (critique + quality delta + approve/reject)
     grade_event = next(
-        (e for e in reversed(events) if e.stage == "GRADE" and e.status == "done" and e.data),
-        None,
+        (e for e in reversed(events) if e.stage == "GRADE" and e.status == "done" and e.data), None
     )
     if grade_event and grade_event.data and "proposal" in grade_event.data:
         proposal = EditProposal.model_validate(grade_event.data["proposal"])
@@ -405,8 +382,7 @@ def main():
         render_proposal_panel(proposal)
     elif next((e for e in events if e.stage == "CRITIQUE" and e.status == "done"), None):
         critique_event = next(
-            (e for e in reversed(events) if e.stage == "CRITIQUE" and e.status == "done"),
-            None,
+            (e for e in reversed(events) if e.stage == "CRITIQUE" and e.status == "done"), None
         )
         if critique_event and critique_event.data:
             critique = CritiqueResult.model_validate(critique_event.data["critique"])

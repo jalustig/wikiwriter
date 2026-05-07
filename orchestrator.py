@@ -1,7 +1,11 @@
-# ABOUTME: Pipeline coordinator — runs all workers in sequence and emits ProgressEvents.
-# ABOUTME: Yields events as an async generator for the Streamlit app to consume.
+# ABOUTME: Orchestrator — runs all workers in sequence and emits ProgressEvents.
+# ABOUTME: Yields events as an async generator; writes a per-run log file to logs/.
 
 import asyncio
+import json
+import os
+import re
+from datetime import datetime, timezone
 
 from models import ProgressEvent, WikiArticle, ContentGrade, EditorialRiskProfile
 from models import ImprovementPlan, SourceEvaluation, SectionDraft, CritiqueResult, EditProposal
@@ -32,6 +36,21 @@ class WikiWriterOrchestrator:
         self.output_grader = OutputGrader()
 
     async def run(self, url: str):
+        """Wrap _run with per-run log file in logs/."""
+        os.makedirs("logs", exist_ok=True)
+        slug = re.sub(r"[^a-z0-9]+", "_", url.lower())[:60].strip("_")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        start = datetime.now(timezone.utc)
+        with open(f"logs/{ts}_{slug}.jsonl", "w") as log:
+            async for event in self._run(url):
+                log.write(json.dumps({
+                    "t": round((datetime.now(timezone.utc) - start).total_seconds(), 2),
+                    **event.model_dump(exclude={"data"}),
+                }) + "\n")
+                log.flush()
+                yield event
+
+    async def _run(self, url: str):
         # Stage 1: Fetch article
         yield ProgressEvent(stage="FETCH", status="running", message=f"Fetching {url}...")
         article = await fetch_article(url)

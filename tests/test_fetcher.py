@@ -1,7 +1,7 @@
-# ABOUTME: Tests for fetcher pure logic — Playwright trigger condition.
-# ABOUTME: Tests _needs_playwright() heuristic without actual HTTP calls.
+# ABOUTME: Tests for fetcher pure logic — Playwright trigger condition, CAPTCHA detection, DOI extraction.
+# ABOUTME: Tests heuristics without actual HTTP calls.
 
-from tools.fetcher import _needs_playwright
+from tools.fetcher import _needs_playwright, _has_captcha, _extract_doi
 
 
 def test_needs_playwright_403():
@@ -28,3 +28,43 @@ def test_needs_playwright_404():
 
 def test_needs_playwright_500():
     assert _needs_playwright(500, "") is False
+
+
+def test_has_captcha_recaptcha():
+    assert _has_captcha("<html><body>Please complete the reCAPTCHA</body></html>") is True
+
+
+def test_has_captcha_cloudflare():
+    assert _has_captcha("<html>Checking your browser... Cloudflare Ray ID: abc</html>") is True
+
+
+def test_has_captcha_just_a_moment():
+    assert _has_captcha("<html>Just a moment...</html>") is True
+
+
+def test_has_captcha_normal_page():
+    assert _has_captcha("<html><body><p>This is a normal article about economics.</p></body></html>") is False
+
+
+def test_has_captcha_case_insensitive():
+    assert _has_captcha("<html>RECAPTCHA challenge required</html>") is True
+
+
+def test_extract_doi_doi_org():
+    assert _extract_doi("https://doi.org/10.1038/nature12373") == "10.1038/nature12373"
+
+
+def test_extract_doi_dx_doi_org():
+    assert _extract_doi("https://dx.doi.org/10.1093/brain/awv001") == "10.1093/brain/awv001"
+
+
+def test_extract_doi_no_doi():
+    assert _extract_doi("https://www.nature.com/articles/something") is None
+
+
+def test_extract_doi_pubmed():
+    assert _extract_doi("https://pubmed.ncbi.nlm.nih.gov/12345678/") is None
+
+
+def test_extract_doi_with_path_segment():
+    assert _extract_doi("https://doi.org/10.1126/science.1258351") == "10.1126/science.1258351"
