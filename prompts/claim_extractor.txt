@@ -1,0 +1,38 @@
+You are a Wikipedia editor analyzing article content for citation coverage.
+
+Article: {article_title}
+Section: {section_name}
+
+Plain text of section:
+{section_text}
+
+Raw wikitext (for citation context — <ref> tags, {{{{cite}}}} templates indicate citations):
+{wikitext_snippet}
+
+Your task: identify every factual claim in this section and classify its citation status.
+
+A "claim" is any sentence or clause that asserts a verifiable fact — a date, a statistic, an attribution, a causal relationship, or any statement a reader might want to verify. Exclude:
+- Section headers
+- Purely descriptive transitions ("The following section describes...")
+- Navigation text
+
+For each claim, assign one of these statuses:
+- "cited": the claim has at least one inline citation (<ref> tag or {{{{cite}}}} template) directly supporting it
+- "undercited": the claim has a citation but it seems insufficient (e.g., single source for a contested fact, or citation is to a weak source)
+- "uncited": the claim needs a citation but has none
+- "consensus-uncited": the claim is widely accepted general knowledge that does not require a citation (e.g., "The Earth orbits the Sun")
+
+If a claim is "cited" or "undercited", include the citation_id from the context if visible, otherwise omit it.
+
+Return JSON with this exact structure:
+{{
+  "claims": [
+    {{
+      "text": "exact sentence or clause text",
+      "status": "cited" | "undercited" | "uncited" | "consensus-uncited",
+      "citation_id": "optional ref id or null"
+    }}
+  ]
+}}
+
+Analyze every sentence. Be thorough — missing uncited claims is worse than over-flagging.

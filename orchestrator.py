@@ -2,28 +2,15 @@
 # ABOUTME: Yields events as an async generator for the Streamlit app to consume.
 
 import asyncio
-import re
 
-from models import ProgressEvent, WikiArticle, ImprovementPlan
+from models import ProgressEvent
 from tools.wikipedia import fetch_article
 from workers.article_grader import ArticleGrader
 from workers.editorial_context import EditorialContextAnalyzer
 from workers.planner import Planner
+from workers.claim_extractor import ClaimExtractor
 from workers.source_evaluator import SourceEvaluator
 from workers.source_discovery import SourceDiscovery
-
-
-def _extract_uncited_claims_simple(article: WikiArticle, plan: ImprovementPlan) -> list[str]:
-    """Return up to 5 sentences from the lead section that lack citation markers."""
-    lead_text = article.section_texts.get("Lead", "") or next(iter(article.section_texts.values()), "")
-    # Strip wikitext markup to plain sentences
-    plain = re.sub(r"\[\[([^\]|]+\|)?([^\]]+)\]\]", r"\2", lead_text)
-    plain = re.sub(r"\{\{[^}]+\}\}", "", plain)
-    plain = re.sub(r"<[^>]+>", "", plain)
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", plain) if len(s.strip()) > 40]
-    # Keep sentences that don't contain a citation reference (no <ref> or footnote markers)
-    uncited = [s for s in sentences if "<ref" not in s and "{{cite" not in s.lower()]
-    return uncited[:5]
 
 
 class WikiWriterOrchestrator:
@@ -31,6 +18,7 @@ class WikiWriterOrchestrator:
         self.article_grader = ArticleGrader()
         self.editorial_analyzer = EditorialContextAnalyzer()
         self.planner = Planner()
+        self.claim_extractor = ClaimExtractor()
         self.source_evaluator = SourceEvaluator()
         self.source_discovery = SourceDiscovery()
 
@@ -84,10 +72,21 @@ class WikiWriterOrchestrator:
             )
             return
 
-        # Stage 4 + 5: Source audit and discovery
-        uncited_claims = _extract_uncited_claims_simple(article, plan)
-        n_cit = len(article.citations)
+        # Stage 4: Claim extraction
+        yield ProgressEvent(stage="CLAIMS", status="running", message="Extracting and tagging claims...")
+        claim_map = await self.claim_extractor.run(article, plan)
+        uncited_claims = [c for c in claim_map.claims if c.status in ("uncited", "undercited")]
+        n_claims = len(claim_map.claims)
         n_uncited = len(uncited_claims)
+        yield ProgressEvent(
+            stage="CLAIMS",
+            status="done",
+            message=f"Found {n_claims} claims; {n_uncited} need sources",
+            data={"claim_map": claim_map.model_dump()},
+        )
+
+        # Stage 5: Source audit and discovery
+        n_cit = len(article.citations)
         yield ProgressEvent(
             stage="SOURCES",
             status="running",
@@ -99,7 +98,7 @@ class WikiWriterOrchestrator:
             for c in article.citations
         ]
         discovery_tasks = [
-            self.source_discovery.find_sources(claim, article.title)
+            self.source_discovery.find_sources(claim.text, article.title)
             for claim in uncited_claims[:5]
         ]
 

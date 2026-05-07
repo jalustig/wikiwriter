@@ -6,7 +6,7 @@ import asyncio
 import plotly.graph_objects as go
 import streamlit as st
 
-from models import ProgressEvent, WikiArticle, ContentGrade, EditorialRiskProfile, ImprovementPlan
+from models import ProgressEvent, WikiArticle, ContentGrade, EditorialRiskProfile, ImprovementPlan, ClaimMap
 from orchestrator import WikiWriterOrchestrator
 
 STATUS_COLORS = {
@@ -28,6 +28,7 @@ STAGE_LABELS = {
     "FETCH": "Fetch article",
     "INTAKE": "Grade & analyze",
     "PLAN": "Plan edits",
+    "CLAIMS": "Extract claims",
     "SOURCES": "Audit & discover sources",
 }
 
@@ -165,6 +166,41 @@ def render_plan_chart(
     st.caption(plan.narrative)
 
 
+CLAIM_STATUS_ICONS = {
+    "cited": "✅",
+    "undercited": "⚠️",
+    "uncited": "❌",
+    "consensus-uncited": "ℹ️",
+}
+
+
+def render_claim_map(claim_map: ClaimMap) -> None:
+    st.subheader("Claim Map")
+    counts = {}
+    for c in claim_map.claims:
+        counts[c.status] = counts.get(c.status, 0) + 1
+
+    cols = st.columns(4)
+    for i, status in enumerate(["cited", "undercited", "uncited", "consensus-uncited"]):
+        icon = CLAIM_STATUS_ICONS[status]
+        cols[i].metric(f"{icon} {status.replace('-', ' ').title()}", counts.get(status, 0))
+
+    with st.expander("Claims needing sources", expanded=True):
+        needs_source = [c for c in claim_map.claims if c.status in ("uncited", "undercited")]
+        if not needs_source:
+            st.write("All claims are cited.")
+        else:
+            for claim in needs_source:
+                icon = CLAIM_STATUS_ICONS[claim.status]
+                st.write(f"{icon} {claim.text}")
+
+    with st.expander("All claims"):
+        for claim in claim_map.claims:
+            icon = CLAIM_STATUS_ICONS.get(claim.status, "?")
+            cid = f" _(ref {claim.citation_id})_" if claim.citation_id else ""
+            st.write(f"{icon} {claim.text}{cid}")
+
+
 def main():
     st.set_page_config(page_title="WikiWriter", layout="wide")
     st.title("WikiWriter")
@@ -218,6 +254,16 @@ def main():
     st.subheader("Improvement Plan")
     render_plan_chart(article, grade, plan, risk)
 
+    # Extract claim map if available
+    claims_event = next(
+        (e for e in reversed(events) if e.stage == "CLAIMS" and e.status == "done"),
+        None,
+    )
+    if claims_event and claims_event.data:
+        st.divider()
+        claim_map = ClaimMap.model_validate(claims_event.data["claim_map"])
+        render_claim_map(claim_map)
+
     if "audit" in final_data and "new_sources" in final_data:
         st.divider()
         st.subheader("Sources")
@@ -226,7 +272,10 @@ def main():
             for s in final_data["audit"]:
                 icon = "✅" if s["recommendation"] == "USE" else "⚠️" if s["recommendation"] == "WEAK" else "❌"
                 status_note = f" ({s['status']})" if s["status"] != "LIVE" else ""
-                st.write(f"{icon} [{s['overall_score']:.1f}] `{s['domain_type']}`{status_note} — {s['url'][:80]}")
+                st.write(
+                    f"{icon} [{s['overall_score']:.1f}] `{s['domain_type']}`{status_note}"
+                    f" — {s['url'][:80]}"
+                )
                 if s.get("claim_support_summary"):
                     st.caption(f"   {s['claim_support_summary']}")
         with tab2:
