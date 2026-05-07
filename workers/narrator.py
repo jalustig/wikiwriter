@@ -19,7 +19,7 @@ async def narrate(stage: str, context: dict) -> str:
     """
     try:
         context_text = json.dumps(context, indent=2, default=str)
-        prompt = _PROMPT.format(stage=stage, context=context_text)
+        prompt = _PROMPT.replace("{stage}", stage).replace("{context}", context_text)
         response = await _client.chat.completions.create(
             model=_MODEL,
             messages=[{"role": "user", "content": prompt}],
@@ -27,5 +27,7 @@ async def narrate(stage: str, context: dict) -> str:
             temperature=0.7,
         )
         return response.choices[0].message.content.strip()
-    except Exception:
+    except Exception as e:
+        import sys
+        print(f"[narrator] {stage}: {e}", file=sys.stderr)
         return ""

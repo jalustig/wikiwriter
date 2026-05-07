@@ -272,21 +272,10 @@ def run_and_render(url: str) -> None:
     """
     Stream events from the orchestrator. Each stage runs in a st.status() widget
     (thinking events appear as italic text; collapses on done). Result panels are
-    rendered immediately below the progress area as soon as each stage's data arrives.
+    appended immediately after each stage widget collapses — true append-only rendering.
     """
     stage_widgets: dict[str, object] = {}
     accumulated: dict = {}  # all done-event data accumulated so far
-
-    # Pre-create result containers so they appear below the progress section
-    # in a predictable order as soon as data arrives.
-    result_containers = {
-        "intake":   st.container(),
-        "plan":     st.container(),
-        "claims":   st.container(),
-        "sources":  st.container(),
-        "drafts":   st.container(),
-        "proposal": st.container(),
-    }
 
     async def stream():
         async for event in WikiWriterOrchestrator().run(url):
@@ -311,72 +300,69 @@ def run_and_render(url: str) -> None:
                 )
                 if event.data:
                     accumulated.update(event.data)
-                _render_inline(event, accumulated, result_containers)
+                _render_inline(event, accumulated)
             elif event.status == "error":
                 widget.update(label=f"{icon} {event.message}", state="error", expanded=True)
 
     asyncio.run(stream())
 
 
-def _render_inline(event, accumulated: dict, containers: dict) -> None:
-    """Render a result panel immediately when the relevant stage completes."""
+def _render_inline(event, accumulated: dict) -> None:
+    """Render a result panel immediately when the relevant stage completes.
 
+    Called after each stage widget collapses — st.* calls here append below
+    all existing widgets, giving true append-only ordering.
+    """
     if event.stage == "INTAKE" and "grade" in accumulated and "risk" in accumulated:
-        with containers["intake"]:
-            st.divider()
-            col1, col2 = st.columns(2)
-            with col1:
-                render_risk_panel(EditorialRiskProfile.model_validate(accumulated["risk"]))
-            with col2:
-                render_grade_panel(ContentGrade.model_validate(accumulated["grade"]))
+        st.divider()
+        col1, col2 = st.columns(2)
+        with col1:
+            render_risk_panel(EditorialRiskProfile.model_validate(accumulated["risk"]))
+        with col2:
+            render_grade_panel(ContentGrade.model_validate(accumulated["grade"]))
 
     elif event.stage == "PLAN" and "plan" in accumulated and "article" in accumulated:
-        with containers["plan"]:
-            st.divider()
-            st.subheader("Improvement Plan")
-            render_plan_chart(
-                WikiArticle.model_validate(accumulated["article"]),
-                ContentGrade.model_validate(accumulated["grade"]),
-                ImprovementPlan.model_validate(accumulated["plan"]),
-                EditorialRiskProfile.model_validate(accumulated["risk"]),
-            )
+        st.divider()
+        st.subheader("Improvement Plan")
+        render_plan_chart(
+            WikiArticle.model_validate(accumulated["article"]),
+            ContentGrade.model_validate(accumulated["grade"]),
+            ImprovementPlan.model_validate(accumulated["plan"]),
+            EditorialRiskProfile.model_validate(accumulated["risk"]),
+        )
 
     elif event.stage == "CLAIMS" and "claim_map" in accumulated:
-        with containers["claims"]:
-            st.divider()
-            render_claim_map(ClaimMap.model_validate(accumulated["claim_map"]))
+        st.divider()
+        render_claim_map(ClaimMap.model_validate(accumulated["claim_map"]))
 
     elif event.stage == "SOURCES" and "audit" in accumulated:
-        with containers["sources"]:
-            st.divider()
-            st.subheader("Sources")
-            tab1, tab2 = st.tabs(["Existing Citations", "New Sources"])
-            with tab1:
-                for s in accumulated["audit"]:
-                    icon = "✅" if s["recommendation"] == "USE" else (
-                        "⚠️" if s["recommendation"] == "WEAK" else "❌"
-                    )
-                    note = f" ({s['status']})" if s["status"] != "LIVE" else ""
-                    st.write(
-                        f"{icon} [{s['overall_score']:.1f}] `{s['domain_type']}`{note} — {s['url'][:80]}"
-                    )
-                    if s.get("claim_support_summary"):
-                        st.caption(f"   {s['claim_support_summary']}")
-            with tab2:
-                for s in accumulated.get("new_sources", []):
-                    st.write(f"➕ [{s['overall_score']:.1f}] `{s['domain_type']}` — {s['url'][:80]}")
-                    if s.get("claim_support_summary"):
-                        st.caption(f"   {s['claim_support_summary']}")
+        st.divider()
+        st.subheader("Sources")
+        tab1, tab2 = st.tabs(["Existing Citations", "New Sources"])
+        with tab1:
+            for s in accumulated["audit"]:
+                icon = "✅" if s["recommendation"] == "USE" else (
+                    "⚠️" if s["recommendation"] == "WEAK" else "❌"
+                )
+                note = f" ({s['status']})" if s["status"] != "LIVE" else ""
+                st.write(
+                    f"{icon} [{s['overall_score']:.1f}] `{s['domain_type']}`{note} — {s['url'][:80]}"
+                )
+                if s.get("claim_support_summary"):
+                    st.caption(f"   {s['claim_support_summary']}")
+        with tab2:
+            for s in accumulated.get("new_sources", []):
+                st.write(f"➕ [{s['overall_score']:.1f}] `{s['domain_type']}` — {s['url'][:80]}")
+                if s.get("claim_support_summary"):
+                    st.caption(f"   {s['claim_support_summary']}")
 
     elif event.stage == "DRAFT" and "section_drafts" in accumulated:
-        with containers["drafts"]:
-            st.divider()
-            render_diff_view(accumulated["section_drafts"])
+        st.divider()
+        render_diff_view(accumulated["section_drafts"])
 
     elif event.stage == "GRADE" and "proposal" in accumulated:
-        with containers["proposal"]:
-            st.divider()
-            render_proposal_panel(EditProposal.model_validate(accumulated["proposal"]))
+        st.divider()
+        render_proposal_panel(EditProposal.model_validate(accumulated["proposal"]))
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
