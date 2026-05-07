@@ -37,7 +37,6 @@ class DAGExecutor:
         nodes: dict[str, TaskNode],
         ctx: Any,
     ) -> AsyncGenerator[ProgressEvent, None]:
-        pending_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         running: dict[str, asyncio.Task] = {}
 
         def _ready() -> list[str]:

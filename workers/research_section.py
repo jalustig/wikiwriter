@@ -9,7 +9,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from cache import cache, cache_key
-from models import WikiArticle, ArticleSummary, SectionResearch, Claim, ClaimMap, SourceEvaluation
+from models import WikiArticle, ArticleSummary, SectionResearch, Claim, SourceEvaluation
 from tools.search import search
 from workers.source_evaluator import SourceEvaluator
 from workers.source_discovery import _is_allowed_source_url

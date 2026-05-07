@@ -2,18 +2,17 @@
 # ABOUTME: Emits ProgressEvents as async generator; writes verbose per-run log to logs/.
 
 import asyncio
-import difflib
 import json
 import os
 import re
 from datetime import datetime, timezone
 
 from cache import get_cache_stats, reset_cache_stats
-from dag import DAGExecutor, build_dag
+from dag import DAGExecutor
 from models import (
-    ProgressEvent, WikiArticle, ArticleSummary, ContentGrade, EditorialEnvironment,
-    SourceEvaluation, ArticleAssessment, SectionResearch, SectionDraft,
-    CritiqueResult, SectionCritiqueResult, EditSummary, EditProposal, TaskNode,
+    ProgressEvent, WikiArticle, SourceEvaluation,
+    SectionResearch, SectionDraft,
+    CritiqueResult, SectionCritiqueResult, EditProposal,
 )
 from tools.wikipedia import fetch_article
 from workers.article_grader import ArticleGrader
@@ -128,7 +127,10 @@ class WikiWriterOrchestrator:
             yield _think("FETCH", thought)
         yield ProgressEvent(
             stage="FETCH", status="done",
-            message=f"'{article.title}' — {len(article.sections)} sections, {len(article.citations)} citations",
+            message=(
+                f"'{article.title}' — {len(article.sections)} sections,"
+                f" {len(article.citations)} citations"
+            ),
         )
 
         # ── GATHER EVIDENCE (parallel) ────────────────────────────────────────
@@ -221,7 +223,6 @@ class WikiWriterOrchestrator:
             if not approved and cycle == 0:
                 yield _think("PLAN", f"Plan needs revision: {feedback}")
                 # One retry with feedback appended
-                from workers.edit_planner import _revision_context
                 if critique_for_planner is None:
                     from models import CritiqueResult as CR
                     feedback_critique = CR(
@@ -385,8 +386,10 @@ class WikiWriterOrchestrator:
                 yield _think("CRITIQUE", "Revision budget exhausted — accepting passing sections.")
                 filtered = [
                     d for d in all_section_drafts
-                    if d.section_name in (final_critique.passing_sections or
-                                         [d.section_name for d in all_section_drafts])
+                    if d.section_name in (
+                        final_critique.passing_sections or
+                        [d.section_name for d in all_section_drafts]
+                    )
                 ]
                 assembled = _assemble_with_drafts(article, filtered)
                 all_section_drafts = filtered
@@ -459,7 +462,6 @@ class WikiWriterOrchestrator:
         section_name = params["section"]
         mode = params.get("mode", "CiteFix")
         article: WikiArticle = ctx["article"]
-        article_summary: ArticleSummary = ctx["article_summary"]
 
         # Collect sources from research_section dependencies
         section_research_list: list[SectionResearch] = []
@@ -491,7 +493,6 @@ class WikiWriterOrchestrator:
         article: WikiArticle = ctx["article"]
         audit: list[SourceEvaluation] = ctx.get("source_evals", [])
         source_report = _assemble_source_report(audit, [], None)
-        assembled = _assemble_with_drafts(article, [])
         return await self.synthesis_writer.run(article, [], source_report)
 
     async def _handle_synthesize(

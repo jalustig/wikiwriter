@@ -8,10 +8,7 @@ import re
 import sys
 
 from constants import STAGE_META
-from models import (
-    WikiArticle, ContentGrade, EditorialEnvironment, ArticleAssessment,
-    EditProposal, CritiqueResult, TaskNode,
-)
+from models import ContentGrade, EditorialEnvironment, ArticleAssessment
 from orchestrator import WikiWriterOrchestrator
 
 CLAIM_ICONS = {"cited": "✅", "undercited": "⚠️", "uncited": "❌", "consensus-uncited": "ℹ️"}
@@ -54,13 +51,14 @@ def _print_grade(grade: ContentGrade) -> None:
 def _print_assessment(assessment: ArticleAssessment) -> None:
     _sep("Article Assessment")
     print(f"  Importance: {assessment.importance.tier} — {assessment.importance.rationale}")
-    print(f"  Class: {assessment.article_class} | Effort: {assessment.effort_ceiling} | Scope: {assessment.edit_scope}")
+    print(f"  Class: {assessment.article_class} | Effort: {assessment.effort_ceiling}"
+          f" | Scope: {assessment.edit_scope}")
     print(f"\n  Edit rationale: {assessment.edit_rationale}")
     if assessment.primary_weaknesses:
         print("\n  Primary weaknesses:")
         for w in assessment.primary_weaknesses:
             print(f"    • {w}")
-    print(f"\n  Per-section decisions:")
+    print("\n  Per-section decisions:")
     for s in assessment.sections:
         if s.action == "EDIT":
             print(f"    ✏️  {s.name:<40} [{s.edit_type}] — {s.rationale}")

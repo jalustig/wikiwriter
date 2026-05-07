@@ -62,7 +62,10 @@ async def summarize_edit(
     result = EditSummary(
         narrative=raw.get("narrative", "Edit completed."),
         sections_changed=raw.get("sections_changed", sections_changed),
-        disclosure_line=raw.get("disclosure_line", "AI-assisted Wikipedia edit ([[Wikipedia:Bots/Requests_for_approval/WikiWriter|WikiWriter AI]])"),
+        disclosure_line=raw.get(
+            "disclosure_line",
+            "AI-assisted Wikipedia edit ([[Wikipedia:Bots/Requests_for_approval/WikiWriter|WikiWriter AI]])",
+        ),
     )
     cache.set(key, result.model_dump(), expire=3600)
     return result

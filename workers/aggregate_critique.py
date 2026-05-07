@@ -8,7 +8,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from cache import cache, cache_key
-from models import SectionCritiqueResult, CritiqueResult, DimensionCritique
+from models import SectionCritiqueResult, CritiqueResult
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 _PROMPT = (Path(__file__).parent.parent / "prompts" / "aggregate_critique.txt").read_text()
