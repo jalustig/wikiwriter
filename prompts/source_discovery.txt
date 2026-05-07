@@ -1,0 +1,19 @@
+You are a Wikipedia research assistant. Generate an effective web search query to find reliable sources for a specific claim in a Wikipedia article.
+
+## Claim to source
+
+{claim}
+
+## Article context
+
+{article_title}
+
+## Task
+
+Generate a concise, targeted search query (under 100 characters) that would find high-quality, verifiable sources supporting this specific claim. Prefer queries likely to surface academic papers, government reports, established news coverage, or authoritative reference works rather than blogs or forums.
+
+Return ONLY a JSON object — no preamble, no markdown fences:
+
+{{
+  "query": "your search query here"
+}}

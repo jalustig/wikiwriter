@@ -13,9 +13,9 @@ CACHE_DIR = os.getenv("CACHE_DIR", ".wikiwriter_cache")
 cache = diskcache.Cache(CACHE_DIR)
 
 
-def cache_key(*args) -> str:
+def cache_key(*args, **kwargs) -> str:
     """Deterministic cache key from any JSON-serialisable inputs."""
-    payload = json.dumps(args, sort_keys=True, default=str)
+    payload = json.dumps((args, kwargs), sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()
 
 

@@ -28,6 +28,7 @@ STAGE_LABELS = {
     "FETCH": "Fetch article",
     "INTAKE": "Grade & analyze",
     "PLAN": "Plan edits",
+    "SOURCES": "Audit & discover sources",
 }
 
 RISK_COLORS = {
@@ -201,6 +202,12 @@ def main():
     plan = ImprovementPlan.model_validate(plan_event.data["plan"])
     article = WikiArticle.model_validate(plan_event.data["article"])
 
+    # Accumulate final_data from all SOURCES done events
+    final_data: dict = {}
+    for event in events:
+        if event.stage == "SOURCES" and event.status == "done" and event.data:
+            final_data.update(event.data)
+
     st.divider()
     render_risk_panel(risk)
 
@@ -210,6 +217,23 @@ def main():
     st.divider()
     st.subheader("Improvement Plan")
     render_plan_chart(article, grade, plan, risk)
+
+    if "audit" in final_data and "new_sources" in final_data:
+        st.divider()
+        st.subheader("Sources")
+        tab1, tab2 = st.tabs(["Existing Citations", "New Sources"])
+        with tab1:
+            for s in final_data["audit"]:
+                icon = "✅" if s["recommendation"] == "USE" else "⚠️" if s["recommendation"] == "WEAK" else "❌"
+                status_note = f" ({s['status']})" if s["status"] != "LIVE" else ""
+                st.write(f"{icon} [{s['overall_score']:.1f}] `{s['domain_type']}`{status_note} — {s['url'][:80]}")
+                if s.get("claim_support_summary"):
+                    st.caption(f"   {s['claim_support_summary']}")
+        with tab2:
+            for s in final_data["new_sources"]:
+                st.write(f"➕ [{s['overall_score']:.1f}] `{s['domain_type']}` — {s['url'][:80]}")
+                if s.get("claim_support_summary"):
+                    st.caption(f"   {s['claim_support_summary']}")
 
 
 if __name__ == "__main__":
