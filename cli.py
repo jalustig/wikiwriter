@@ -182,7 +182,13 @@ def _render_results(event, accumulated: dict) -> None:
 
 # ── Main stream loop ───────────────────────────────────────────────────────────
 
-async def _stream(url: str) -> None:
+_STOP_AFTER_MAP = {
+    "intake": "INTAKE", "plan": "PLAN", "claims": "CLAIMS",
+    "sources": "SOURCES", "draft": "DRAFT", "grade": "GRADE",
+}
+
+
+async def _stream(url: str, stop_after: str | None = None) -> None:
     accumulated: dict = {}
     current_stage: str | None = None
 
@@ -205,6 +211,8 @@ async def _stream(url: str) -> None:
             if event.data:
                 accumulated.update(event.data)
             _render_results(event, accumulated)
+            if stop_after and stage == stop_after:
+                return
         elif event.status == "error":
             print(f"✗  {event.message}", file=sys.stderr, flush=True)
 
@@ -212,8 +220,13 @@ async def _stream(url: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="WikiWriter — AI Wikipedia editor")
     parser.add_argument("--article", required=True, metavar="URL", help="Wikipedia article URL")
+    parser.add_argument(
+        "--stop-after", metavar="STAGE", choices=_STOP_AFTER_MAP,
+        help="Stop after this stage: intake, plan, claims, sources, draft, grade",
+    )
     args = parser.parse_args()
-    asyncio.run(_stream(args.article))
+    stop_after = _STOP_AFTER_MAP.get(args.stop_after) if args.stop_after else None
+    asyncio.run(_stream(args.article, stop_after=stop_after))
 
 
 if __name__ == "__main__":

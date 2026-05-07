@@ -41,7 +41,7 @@ class ClaimExtractor:
         if not sections:
             return ClaimMap(claims=[])
 
-        cache_ns = f"claim_extractor:{cache_key(article.url, sorted(sections))}"
+        cache_ns = f"claim_extractor_v2:{cache_key(article.url, sorted(sections))}"
         if cache_ns in cache:
             return ClaimMap.model_validate(cache[cache_ns])
 
