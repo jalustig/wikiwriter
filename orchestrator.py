@@ -21,6 +21,7 @@ from workers.draft_writer import DraftWriter, _assemble_source_report, _build_di
 from workers.synthesis_writer import SynthesisWriter
 from workers.critic import Critic
 from workers.output_grader import OutputGrader
+from workers.narrator import narrate
 
 
 def _think(stage: str, message: str) -> ProgressEvent:
@@ -130,11 +131,17 @@ class WikiWriterOrchestrator:
         article = await fetch_article(url)
         n_sections = len(article.sections)
         n_citations = len(article.citations)
-        cls = article.assessment_class or "unrated"
-        yield _think("FETCH", (
-            f"'{article.title}' is a {cls}-class article with {n_sections} sections "
-            f"and {n_citations} citations. Reading the content to figure out what needs work."
-        ))
+        intro_text = next((v for k, v in article.section_texts.items() if not k), "")
+        thought = await narrate("fetch", {
+            "article_title": article.title,
+            "assessment_class": article.assessment_class or "unrated",
+            "n_sections": n_sections,
+            "n_citations": n_citations,
+            "sections": article.sections[:12],
+            "intro_text": intro_text[:600],
+        })
+        if thought:
+            yield _think("FETCH", thought)
         yield ProgressEvent(
             stage="FETCH",
             status="done",
@@ -147,36 +154,26 @@ class WikiWriterOrchestrator:
             status="running",
             message="Assessing article quality and reading the editorial history...",
         )
-        yield _think("INTAKE", (
-            "Running the quality rubric across 7 dimensions simultaneously with "
-            "an analysis of the edit history and talk page activity."
-        ))
         content_grade, editorial_risk = await asyncio.gather(
             self.article_grader.run(article),
             self.editorial_analyzer.run(article),
         )
         worst_dim = min(content_grade.dimension_scores, key=content_grade.dimension_scores.get)
-        worst_score = content_grade.dimension_scores[worst_dim]
-        yield _think("INTAKE", (
-            f"Weakest dimension: {worst_dim.replace('_', ' ')} at {worst_score:.1f}/10 — "
-            "that's where improvements will have the most impact."
-        ))
-        if editorial_risk.risk_tier in ("HIGH", "CRITICAL"):
-            yield _think("INTAKE", (
-                f"High editorial friction: {editorial_risk.edit_velocity} edits/month, "
-                f"{editorial_risk.revert_rate_12mo:.0%} revert rate. "
-                "I'll be conservative and avoid contested sections."
-            ))
-        elif editorial_risk.risk_tier == "MODERATE":
-            yield _think("INTAKE", (
-                f"Moderate activity ({editorial_risk.edit_velocity} edits/month). "
-                "I'll work around the flip-flopped sections."
-            ))
-        else:
-            yield _think("INTAKE", (
-                f"Quiet editorial environment — {editorial_risk.edit_velocity} edits/month "
-                "with a low revert rate. Good conditions for substantive improvements."
-            ))
+        thought = await narrate("quality_and_risk", {
+            "article_title": article.title,
+            "grade": content_grade.letter_grade,
+            "overall_score": content_grade.overall_score,
+            "dimension_scores": content_grade.dimension_scores,
+            "weakest_dimension": worst_dim,
+            "weakest_score": content_grade.dimension_scores[worst_dim],
+            "risk_tier": editorial_risk.risk_tier,
+            "revert_rate": editorial_risk.revert_rate_12mo,
+            "edit_velocity": editorial_risk.edit_velocity,
+            "flip_flopped_sections": editorial_risk.flip_flopped_sections,
+            "grade_narrative": content_grade.narrative,
+        })
+        if thought:
+            yield _think("INTAKE", thought)
         grade_summary = f"{content_grade.letter_grade} ({content_grade.overall_score:.1f}/10)"
         yield ProgressEvent(
             stage="INTAKE",
@@ -187,19 +184,19 @@ class WikiWriterOrchestrator:
 
         # ── Stage 3: Planning ─────────────────────────────────────────────
         yield ProgressEvent(stage="PLAN", status="running", message="Planning edits...")
-        yield _think("PLAN", (
-            f"Deciding which sections to edit on a {content_grade.letter_grade} "
-            f"({content_grade.overall_score:.1f}/10) article under {editorial_risk.risk_tier} "
-            "editorial risk..."
-        ))
         plan = await self.planner.run(article, content_grade, editorial_risk)
-        for s in plan.sections_to_edit:
-            yield _think("PLAN", (
-                f"Targeting '{s.name}' for {', '.join(s.modes)} — {s.rationale[:90]}"
-            ))
-        for name in plan.sections_excluded:
-            reason = plan.exclusion_reasons.get(name, "excluded by planner")
-            yield _think("PLAN", f"Skipping '{name}' — {reason}")
+        thought = await narrate("planning", {
+            "article_title": article.title,
+            "sections_to_edit": [
+                {"name": s.name, "modes": s.modes, "rationale": s.rationale}
+                for s in plan.sections_to_edit
+            ],
+            "sections_excluded": plan.sections_excluded,
+            "exclusion_reasons": plan.exclusion_reasons,
+            "plan_narrative": plan.narrative,
+        })
+        if thought:
+            yield _think("PLAN", thought)
         n_edit = len(plan.sections_to_edit)
         n_excl = len(plan.sections_excluded)
         yield ProgressEvent(
@@ -219,19 +216,17 @@ class WikiWriterOrchestrator:
 
         # ── Stage 4: Claim extraction ─────────────────────────────────────
         yield ProgressEvent(stage="CLAIMS", status="running", message="Tagging claims by citation status...")
-        n_planned = len(plan.sections_to_edit)
-        yield _think("CLAIMS", (
-            f"Scanning {n_planned} planned sections sentence by sentence, "
-            "classifying each claim as cited, under-cited, uncited, or consensus knowledge."
-        ))
         claim_map = await self.claim_extractor.run(article, plan)
         uncited_claims = [c for c in claim_map.claims if c.status in ("uncited", "undercited")]
         n_claims = len(claim_map.claims)
         n_uncited = len(uncited_claims)
-        yield _think("CLAIMS", (
-            f"Found {n_claims} claims total; {n_uncited} need sources. "
-            "Those are my targets for source discovery."
-        ))
+        thought = await narrate("claims", {
+            "n_claims_total": n_claims,
+            "n_uncited": n_uncited,
+            "sample_uncited": [c.text[:80] for c in uncited_claims[:3]],
+        })
+        if thought:
+            yield _think("CLAIMS", thought)
         yield ProgressEvent(
             stage="CLAIMS",
             status="done",
@@ -279,18 +274,16 @@ class WikiWriterOrchestrator:
                     audit_results.append(result)
                     r = result
                     if r.status == "DEAD":
-                        yield _think("SOURCES", f"Dead link ({r.url[:55]}) — checking Wayback Machine")
+                        yield _think("SOURCES", f"Dead link: {r.url[:60]}")
                     else:
-                        verdict_note = r.claim_support_summary[:70] if r.claim_support_summary else ""
-                        yield _think("SOURCES", (
-                            f"{r.domain_type} [{r.overall_score:.1f}] → {r.recommendation}"
-                            + (f" — {verdict_note}" if verdict_note else "")
-                        ))
+                        note = r.claim_support_summary[:70] if r.claim_support_summary else ""
+                        msg = f"{r.domain_type} [{r.overall_score:.1f}] → {r.recommendation}"
+                        yield _think("SOURCES", msg + (f" — {note}" if note else ""))
                 elif kind == "discovery":
                     discovery_results_nested.append(result)
                     for s in result:
                         yield _think("SOURCES", (
-                            f"Found new source: {s.domain_type} [{s.overall_score:.1f}] "
+                            f"New source: {s.domain_type} [{s.overall_score:.1f}] "
                             f"— {s.claim_support_summary[:60]}"
                         ))
 
@@ -305,9 +298,15 @@ class WikiWriterOrchestrator:
         new_sources = [s for group in discovery_results_nested for s in group]
         n_usable = sum(1 for r in audit_results if r.recommendation == "USE")
         n_dead = sum(1 for r in audit_results if r.status == "DEAD")
-        if n_dead:
-            plural = "s" if n_dead > 1 else ""
-            yield _think("SOURCES", f"{n_dead} dead link{plural} found in existing citations.")
+        thought = await narrate("sources_complete", {
+            "n_audited": len(audit_results),
+            "n_usable": n_usable,
+            "n_dead": n_dead,
+            "n_new": len(new_sources),
+            "rejected": [r.url[:50] for r in audit_results if r.recommendation == "REJECT"],
+        })
+        if thought:
+            yield _think("SOURCES", thought)
         yield ProgressEvent(
             stage="SOURCES",
             status="done",
@@ -328,9 +327,7 @@ class WikiWriterOrchestrator:
             message=f"Writing {n_edit} section drafts...",
         )
         for s in plan.sections_to_edit:
-            yield _think("DRAFT", (
-                f"Drafting '{s.name}' — {', '.join(s.modes)}: {s.rationale[:80]}"
-            ))
+            yield _think("DRAFT", f"Drafting '{s.name}' — {', '.join(s.modes)}: {s.rationale[:80]}")
 
         draft_tasks = [
             self.draft_writer.run(
@@ -343,16 +340,16 @@ class WikiWriterOrchestrator:
         ]
         draft_results = await asyncio.gather(*draft_tasks, return_exceptions=True)
         section_drafts = [r for r in draft_results if not isinstance(r, Exception)]
-        n_failed = n_edit - len(section_drafts)
-        if n_failed:
-            plural = "s" if n_failed > 1 else ""
-            yield _think("DRAFT", f"{n_failed} section draft{plural} failed — continuing with the rest.")
-
-        yield _think("DRAFT", (
-            f"Merging {len(section_drafts)} section drafts into a coherent article. "
-            "Checking transitions, consistency, and lead quality."
-        ))
         assembled = await self.synthesis_writer.run(article, section_drafts, source_report)
+
+        thought = await narrate("drafts_complete", {
+            "n_drafted": len(section_drafts),
+            "n_failed": n_edit - len(section_drafts),
+            "sections": [d.section_name for d in section_drafts],
+            "changes_summary": [d.changes_made[:2] for d in section_drafts],
+        })
+        if thought:
+            yield _think("DRAFT", thought)
         yield ProgressEvent(
             stage="DRAFT",
             status="done",
@@ -365,11 +362,10 @@ class WikiWriterOrchestrator:
 
         # ── Stage 7: Critique ─────────────────────────────────────────────
         yield ProgressEvent(stage="CRITIQUE", status="running", message="Reviewing draft quality...")
-        yield _think("CRITIQUE", (
-            "Running the draft through the same 7-dimension rubric used to grade the original. "
-            "Looking for NPOV issues, citation gaps, structural problems."
-        ))
-        critique, final_draft, critique_events = await self._critique_loop(assembled, source_report)
+        sections_edited = [d.section_name for d in section_drafts]
+        critique, final_draft, critique_events = await self._critique_loop(
+            assembled, source_report, sections_edited=sections_edited
+        )
         for e in critique_events:
             yield e
         yield ProgressEvent(
@@ -389,21 +385,21 @@ class WikiWriterOrchestrator:
 
         # ── Stage 8: Grading ──────────────────────────────────────────────
         yield ProgressEvent(stage="GRADE", status="running", message="Scoring the final output...")
-        yield _think("GRADE", (
-            "Comparing the revised article against the original across the same 7 dimensions "
-            "to measure the quality delta."
-        ))
         output_grade = await self.output_grader.run(final_draft, article)
         quality_delta = output_grade.overall_score - content_grade.overall_score
-        direction = "up" if quality_delta > 0 else "down"
-        yield _think("GRADE", (
-            f"Quality moved {direction}: {content_grade.letter_grade} ({content_grade.overall_score:.1f}) "
-            f"→ {output_grade.letter_grade} ({output_grade.overall_score:.1f}), "
-            f"a {quality_delta:+.1f} point change."
-        ))
-        if quality_delta <= 0:
-            yield _think("GRADE", "Quality didn't improve — presenting for your review so you can decide.")
-
+        thought = await narrate("grade_complete", {
+            "input_grade": content_grade.letter_grade,
+            "input_score": content_grade.overall_score,
+            "output_grade": output_grade.letter_grade,
+            "output_score": output_grade.overall_score,
+            "quality_delta": quality_delta,
+            "dimension_deltas": {
+                k: round(output_grade.dimension_scores.get(k, 0) - v, 1)
+                for k, v in content_grade.dimension_scores.items()
+            },
+        })
+        if thought:
+            yield _think("GRADE", thought)
         yield ProgressEvent(
             stage="GRADE",
             status="done",
@@ -430,7 +426,11 @@ class WikiWriterOrchestrator:
         )
 
     async def _critique_loop(
-        self, draft: str, source_report: str, cycles: int = 0
+        self,
+        draft: str,
+        source_report: str,
+        sections_edited: list[str] | None = None,
+        cycles: int = 0,
     ) -> tuple[CritiqueResult, str, list[ProgressEvent]]:
         events: list[ProgressEvent] = []
 
@@ -448,7 +448,7 @@ class WikiWriterOrchestrator:
         if cycles > 0:
             events.append(_think("CRITIQUE", f"Revision cycle {cycles}: re-checking the draft."))
 
-        critique = await self.critic.run(draft, source_report)
+        critique = await self.critic.run(draft, source_report, sections_edited=sections_edited)
 
         failed_dims = [k for k, v in critique.dimension_results.items() if v.verdict == "FAIL"]
         passed_dims = [k for k, v in critique.dimension_results.items() if v.verdict == "PASS"]
@@ -473,7 +473,7 @@ class WikiWriterOrchestrator:
             events.append(_think("CRITIQUE", msg))
             revised = await self.draft_writer.revise(draft, critique.revision_instructions, source_report)
             sub_critique, sub_draft, sub_events = await self._critique_loop(
-                revised, source_report, cycles + 1
+                revised, source_report, sections_edited=sections_edited, cycles=cycles + 1
             )
             return sub_critique, sub_draft, events + sub_events
 

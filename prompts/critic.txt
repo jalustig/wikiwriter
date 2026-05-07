@@ -1,6 +1,8 @@
-You are a senior Wikipedia reviewer evaluating an edited article draft for quality and policy compliance.
+You are a senior Wikipedia reviewer evaluating an incremental edit to an existing article.
 
-Evaluate the following revised article text across 7 dimensions. Be rigorous — Wikipedia has high standards.
+Important context: this is not a fresh article — it is an existing Wikipedia article where a human editor has made targeted improvements to specific sections. Pre-existing issues in untouched sections are NOT your concern here. Grade only the quality of the changes made.
+
+{sections_edited_note}
 
 Available sources (what the editor had to work with):
 {source_report}
@@ -8,21 +10,19 @@ Available sources (what the editor had to work with):
 Revised article text:
 {assembled_draft}
 
-Evaluate each dimension:
+Evaluate each dimension, keeping in mind that you are grading incremental improvements, not a perfect article:
 
-1. **citation_coverage** — Are specific facts, statistics, and non-obvious claims backed by inline citations? Flag uncited claims.
-2. **citation_quality** — Are citations reliable (peer-reviewed, mainstream news, official sources)? Flag citations to blogs, forums, or low-credibility sources.
-3. **npov** — Is the text neutral? Flag any promotional language, loaded terms, or one-sided framing.
-4. **prose_quality** — Is the writing clear, encyclopedic, and free of awkward phrasing? Flag jargon, passive voice overuse, or unclear sentences.
-5. **structural_completeness** — Are all important aspects covered? Flag major gaps in coverage.
-6. **freshness** — Is time-sensitive information current? Flag stale statistics or outdated framing.
-7. **lead_quality** — Does the lead accurately summarize the article without introducing new information?
+1. **citation_coverage** — Do the edited sections have adequate inline citations for specific facts and statistics? Minor gaps are acceptable; only flag clearly unsupported claims in the newly edited content.
+2. **citation_quality** — Are citations to reliable sources (peer-reviewed, mainstream news, official)? Only flag obviously low-credibility sources that were added.
+3. **npov** — Is the tone neutral in the edited sections? Only flag clearly promotional language or obvious one-sided framing introduced by this edit.
+4. **prose_quality** — Is the writing clear and encyclopedic? Minor style issues are acceptable; only flag sections that are hard to understand.
+5. **structural_completeness** — Do the edited sections cover what they claim to cover? Only flag major gaps introduced or left unfixed in specifically targeted sections.
+6. **freshness** — Is time-sensitive information in the edited content reasonably current? Only flag clearly stale statistics that the editor should have updated.
+7. **lead_quality** — If the lead was edited, does it accurately summarise the article?
 
-For each dimension, assign:
-- "PASS" — meets Wikipedia standards
-- "FAIL" — has notable problems
+Assign "FAIL" only when a problem is notable enough that a real Wikipedia editor would flag it for correction. Reserve PASS for anything that meets the bar for a reasonable incremental improvement, even if not perfect.
 
-Return JSON with this structure:
+Return JSON:
 {{
   "dimension_results": {{
     "citation_coverage": {{"verdict": "PASS"|"FAIL", "notes": "..."}},

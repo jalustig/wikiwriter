@@ -1,8 +1,9 @@
-# ABOUTME: Streamlit app — live per-stage progress with inline thinking, then edit proposal review.
-# ABOUTME: Each stage runs inside st.status(); collapses automatically when done.
+# ABOUTME: Streamlit app — live per-stage progress with inline thinking and progressive panel rendering.
+# ABOUTME: Results (risk, grade, plan, diff) appear as soon as each stage completes.
 
 import asyncio
 import difflib
+import re
 
 import plotly.graph_objects as go
 import streamlit as st
@@ -28,23 +29,67 @@ MODE_SHORT = {
     "Synthesis Pass":           "Synthesis",
 }
 
-# (icon, running label, done label template)
 STAGE_META = {
-    "FETCH":    ("🌐", "Reading article…",           "Read article"),
-    "INTAKE":   ("📊", "Assessing quality…",          "Quality assessed"),
-    "PLAN":     ("🗺️",  "Planning edits…",             "Edit plan ready"),
-    "CLAIMS":   ("🔎", "Tagging claims…",             "Claims tagged"),
-    "SOURCES":  ("🔍", "Evaluating sources…",         "Sources evaluated"),
-    "DRAFT":    ("✏️",  "Writing drafts…",             "Drafts written"),
-    "CRITIQUE": ("🔬", "Reviewing draft…",            "Draft reviewed"),
-    "GRADE":    ("📈", "Scoring output…",             "Output scored"),
+    "FETCH":    ("🌐", "Reading article…",        "Read article"),
+    "INTAKE":   ("📊", "Assessing quality…",       "Quality assessed"),
+    "PLAN":     ("🗺️",  "Planning edits…",          "Edit plan ready"),
+    "CLAIMS":   ("🔎", "Tagging claims…",          "Claims tagged"),
+    "SOURCES":  ("🔍", "Evaluating sources…",      "Sources evaluated"),
+    "DRAFT":    ("✏️",  "Writing drafts…",          "Drafts written"),
+    "CRITIQUE": ("🔬", "Reviewing draft…",         "Draft reviewed"),
+    "GRADE":    ("📈", "Scoring output…",          "Output scored"),
 }
 
 RISK_COLORS = {"LOW": "green", "MODERATE": "orange", "HIGH": "red", "CRITICAL": "red"}
 VERDICT_COLORS = {"PASS": "green", "REVISE": "orange", "DISCARD": "red"}
-CLAIM_STATUS_ICONS = {
-    "cited": "✅", "undercited": "⚠️", "uncited": "❌", "consensus-uncited": "ℹ️",
+CLAIM_ICONS = {"cited": "✅", "undercited": "⚠️", "uncited": "❌", "consensus-uncited": "ℹ️"}
+
+_DIFF_CSS = """
+<style>
+table.diff {
+    font-family: ui-monospace, monospace;
+    font-size: 13px;
+    border-collapse: collapse;
+    width: 100%;
+    table-layout: fixed;
 }
+table.diff td, table.diff th {
+    padding: 3px 8px;
+    vertical-align: top;
+    word-break: break-word;
+    white-space: pre-wrap;
+    border: 1px solid #e0e0e0;
+}
+table.diff .diff_header { background: #f6f8fa; color: #555; font-size: 11px; width: 3em; }
+table.diff .diff_next   { background: #f6f8fa; width: 1.5em; }
+table.diff td.diff_add  { background: #e6ffec; }
+table.diff td.diff_chg  { background: #fff8c5; }
+table.diff td.diff_sub  { background: #ffeef0; }
+table.diff span.diff_add { background: #acf2bd; }
+table.diff span.diff_chg { background: #ffd33d; }
+table.diff span.diff_sub { background: #fdb8c0; text-decoration: line-through; }
+col.diff_header { width: 3em; }
+col.diff_next   { width: 1.5em; }
+</style>
+"""
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split prose into sentence-level units so diffs are meaningful."""
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    return [p for p in parts if p.strip()]
+
+
+def _html_diff(original: str, revised: str) -> str:
+    """Return side-by-side HTML diff table at sentence granularity."""
+    orig_lines = _split_sentences(original)
+    rev_lines = _split_sentences(revised)
+    d = difflib.HtmlDiff(wrapcolumn=72)
+    return _DIFF_CSS + d.make_table(
+        orig_lines, rev_lines,
+        fromdesc="Original", todesc="Revised",
+        context=True, numlines=2,
+    )
 
 
 # ── Panel renderers ────────────────────────────────────────────────────────────
@@ -65,7 +110,7 @@ def render_risk_panel(risk: EditorialRiskProfile) -> None:
     if risk.flip_flopped_sections:
         st.write("**Flip-flopped sections:**", ", ".join(risk.flip_flopped_sections))
     if risk.editor_imposed_norms:
-        st.write("**Editor-imposed norms:**")
+        st.write("**Editor norms:**")
         for norm in risk.editor_imposed_norms:
             st.write(f"- {norm}")
     st.caption(risk.risk_narrative)
@@ -129,31 +174,35 @@ def render_plan_chart(
     st.caption(plan.narrative)
 
 
+def render_section_diff(draft: dict) -> None:
+    """Render one section's diff as a side-by-side HTML table."""
+    changes = draft.get("changes_made", [])
+    header = f"**{draft['section_name']}**" + (f" — {changes[0]}" if changes else "")
+    with st.expander(header, expanded=False):
+        if changes:
+            st.write("**Changes made:**")
+            for c in changes:
+                st.write(f"- {c}")
+        orig, revised = draft["original_text"], draft["revised_text"]
+        if orig.strip() == revised.strip():
+            st.write("_(no text changes)_")
+        else:
+            st.html(_html_diff(orig, revised))
+        cites_added = draft.get("citations_added", [])
+        cites_removed = draft.get("citations_removed", [])
+        if cites_added:
+            st.write("**Citations added:**", ", ".join(cites_added))
+        if cites_removed:
+            st.write("**Citations removed:**", ", ".join(cites_removed))
+
+
 def render_diff_view(section_drafts: list[dict]) -> None:
     st.subheader("Section Drafts")
     if not section_drafts:
         st.write("No drafts available.")
         return
     for draft in section_drafts:
-        name = draft["section_name"]
-        orig, revised = draft["original_text"], draft["revised_text"]
-        changes = draft.get("changes_made", [])
-        with st.expander(f"**{name}**" + (f" — {changes[0]}" if changes else ""), expanded=False):
-            if changes:
-                st.write("**Changes:**")
-                for c in changes:
-                    st.write(f"- {c}")
-            diff = list(difflib.unified_diff(
-                orig.splitlines(keepends=True), revised.splitlines(keepends=True),
-                fromfile="original", tofile="revised", n=3,
-            ))
-            st.code("".join(diff) if diff else "(no changes)", language="diff")
-            cites_added = draft.get("citations_added", [])
-            cites_removed = draft.get("citations_removed", [])
-            if cites_added:
-                st.write("**Citations added:**", ", ".join(cites_added))
-            if cites_removed:
-                st.write("**Citations removed:**", ", ".join(cites_removed))
+        render_section_diff(draft)
 
 
 def render_critique_panel(critique: CritiqueResult) -> None:
@@ -175,18 +224,16 @@ def render_critique_panel(critique: CritiqueResult) -> None:
 def render_proposal_panel(proposal: EditProposal) -> None:
     st.subheader("Edit Proposal")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Input Grade", proposal.input_grade.letter_grade,
-                f"{proposal.input_grade.overall_score:.1f}/10")
-    col2.metric("Output Grade", proposal.output_grade.letter_grade,
-                f"{proposal.output_grade.overall_score:.1f}/10")
+    col1.metric("Input Grade",
+                proposal.input_grade.letter_grade, f"{proposal.input_grade.overall_score:.1f}/10")
+    col2.metric("Output Grade",
+                proposal.output_grade.letter_grade, f"{proposal.output_grade.overall_score:.1f}/10")
     col3.metric("Quality Delta", f"{proposal.quality_delta:+.1f}", delta_color="normal")
     render_critique_panel(proposal.critique)
-    with st.expander("Article Diff", expanded=False):
-        st.code(proposal.full_diff or "(no diff available)", language="diff")
     st.divider()
     st.subheader("Submit to Wikipedia")
     st.text_area(
-        "Edit summary (copy this into Wikipedia's edit summary box)",
+        "Edit summary (copy into Wikipedia's edit summary box)",
         proposal.disclosure_edit_summary,
         height=80,
     )
@@ -204,68 +251,132 @@ def render_claim_map(claim_map: ClaimMap) -> None:
         counts[c.status] = counts.get(c.status, 0) + 1
     cols = st.columns(4)
     for i, status in enumerate(["cited", "undercited", "uncited", "consensus-uncited"]):
-        icon = CLAIM_STATUS_ICONS[status]
-        cols[i].metric(f"{icon} {status.replace('-', ' ').title()}", counts.get(status, 0))
+        cols[i].metric(f"{CLAIM_ICONS[status]} {status.replace('-', ' ').title()}", counts.get(status, 0))
     with st.expander("Claims needing sources", expanded=True):
         needs_source = [c for c in claim_map.claims if c.status in ("uncited", "undercited")]
         if not needs_source:
             st.write("All claims are cited.")
         else:
             for claim in needs_source:
-                st.write(f"{CLAIM_STATUS_ICONS[claim.status]} {claim.text}")
+                st.write(f"{CLAIM_ICONS[claim.status]} {claim.text}")
     with st.expander("All claims"):
         for claim in claim_map.claims:
-            icon = CLAIM_STATUS_ICONS.get(claim.status, "?")
+            icon = CLAIM_ICONS.get(claim.status, "?")
             cid = f" _(ref {claim.citation_id})_" if claim.citation_id else ""
             st.write(f"{icon} {claim.text}{cid}")
 
 
 # ── Live streaming runner ──────────────────────────────────────────────────────
 
-def run_and_render(url: str) -> dict:
+def run_and_render(url: str) -> None:
     """
-    Stream events from the orchestrator, rendering each stage in a st.status() widget.
-    Thinking events appear as italic text inside the status. Stages collapse when done.
-    Returns a dict of accumulated event data for the results panels below.
+    Stream events from the orchestrator. Each stage runs in a st.status() widget
+    (thinking events appear as italic text; collapses on done). Result panels are
+    rendered immediately below the progress area as soon as each stage's data arrives.
     """
-    stage_widgets: dict[str, object] = {}   # stage_key -> StatusContainer
-    stage_done_labels: dict[str, str] = {}  # stage_key -> final label for collapse
-    accumulated: dict = {}
+    stage_widgets: dict[str, object] = {}
+    accumulated: dict = {}  # all done-event data accumulated so far
+
+    # Pre-create result containers so they appear below the progress section
+    # in a predictable order as soon as data arrives.
+    result_containers = {
+        "intake":   st.container(),
+        "plan":     st.container(),
+        "claims":   st.container(),
+        "sources":  st.container(),
+        "drafts":   st.container(),
+        "proposal": st.container(),
+    }
 
     async def stream():
         async for event in WikiWriterOrchestrator().run(url):
             stage = event.stage
             icon, running_label, done_label = STAGE_META.get(stage, ("•", stage, stage))
 
-            # Create the status widget on first event for this stage
             if stage not in stage_widgets:
                 stage_widgets[stage] = st.status(f"{icon} {running_label}", expanded=True)
-
             widget = stage_widgets[stage]
 
             if event.status == "thinking":
                 widget.markdown(f"*{event.message}*")
             elif event.status == "running":
-                # For progress counters (contains "/"), update the widget label
                 if "/" in event.message:
                     widget.update(label=f"{icon} {event.message}")
                 else:
                     widget.markdown(event.message)
             elif event.status == "done":
-                label = f"{icon} {done_label} — {event.message}"
-                stage_done_labels[stage] = label
-                widget.update(label=label, state="complete", expanded=False)
+                widget.update(
+                    label=f"{icon} {done_label} — {event.message}",
+                    state="complete", expanded=False,
+                )
                 if event.data:
                     accumulated.update(event.data)
+                _render_inline(event, accumulated, result_containers)
             elif event.status == "error":
-                widget.update(
-                    label=f"{icon} {event.message}",
-                    state="error",
-                    expanded=True,
-                )
+                widget.update(label=f"{icon} {event.message}", state="error", expanded=True)
 
     asyncio.run(stream())
-    return accumulated
+
+
+def _render_inline(event, accumulated: dict, containers: dict) -> None:
+    """Render a result panel immediately when the relevant stage completes."""
+
+    if event.stage == "INTAKE" and "grade" in accumulated and "risk" in accumulated:
+        with containers["intake"]:
+            st.divider()
+            col1, col2 = st.columns(2)
+            with col1:
+                render_risk_panel(EditorialRiskProfile.model_validate(accumulated["risk"]))
+            with col2:
+                render_grade_panel(ContentGrade.model_validate(accumulated["grade"]))
+
+    elif event.stage == "PLAN" and "plan" in accumulated and "article" in accumulated:
+        with containers["plan"]:
+            st.divider()
+            st.subheader("Improvement Plan")
+            render_plan_chart(
+                WikiArticle.model_validate(accumulated["article"]),
+                ContentGrade.model_validate(accumulated["grade"]),
+                ImprovementPlan.model_validate(accumulated["plan"]),
+                EditorialRiskProfile.model_validate(accumulated["risk"]),
+            )
+
+    elif event.stage == "CLAIMS" and "claim_map" in accumulated:
+        with containers["claims"]:
+            st.divider()
+            render_claim_map(ClaimMap.model_validate(accumulated["claim_map"]))
+
+    elif event.stage == "SOURCES" and "audit" in accumulated:
+        with containers["sources"]:
+            st.divider()
+            st.subheader("Sources")
+            tab1, tab2 = st.tabs(["Existing Citations", "New Sources"])
+            with tab1:
+                for s in accumulated["audit"]:
+                    icon = "✅" if s["recommendation"] == "USE" else (
+                        "⚠️" if s["recommendation"] == "WEAK" else "❌"
+                    )
+                    note = f" ({s['status']})" if s["status"] != "LIVE" else ""
+                    st.write(
+                        f"{icon} [{s['overall_score']:.1f}] `{s['domain_type']}`{note} — {s['url'][:80]}"
+                    )
+                    if s.get("claim_support_summary"):
+                        st.caption(f"   {s['claim_support_summary']}")
+            with tab2:
+                for s in accumulated.get("new_sources", []):
+                    st.write(f"➕ [{s['overall_score']:.1f}] `{s['domain_type']}` — {s['url'][:80]}")
+                    if s.get("claim_support_summary"):
+                        st.caption(f"   {s['claim_support_summary']}")
+
+    elif event.stage == "DRAFT" and "section_drafts" in accumulated:
+        with containers["drafts"]:
+            st.divider()
+            render_diff_view(accumulated["section_drafts"])
+
+    elif event.stage == "GRADE" and "proposal" in accumulated:
+        with containers["proposal"]:
+            st.divider()
+            render_proposal_panel(EditProposal.model_validate(accumulated["proposal"]))
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -284,66 +395,7 @@ def main():
     if not analyse or not url:
         return
 
-    accumulated = run_and_render(url)
-
-    if not accumulated:
-        st.error("Agent did not produce results — check that the URL is a valid Wikipedia article.")
-        return
-
-    # Build structured results from accumulated event data
-    if "grade" not in accumulated or "risk" not in accumulated or "plan" not in accumulated:
-        st.error("Agent did not complete planning.")
-        return
-
-    risk = EditorialRiskProfile.model_validate(accumulated["risk"])
-    grade = ContentGrade.model_validate(accumulated["grade"])
-    plan = ImprovementPlan.model_validate(accumulated["plan"])
-    article = WikiArticle.model_validate(accumulated["article"])
-
-    st.divider()
-    render_risk_panel(risk)
-
-    st.divider()
-    render_grade_panel(grade)
-
-    st.divider()
-    st.subheader("Improvement Plan")
-    render_plan_chart(article, grade, plan, risk)
-
-    if "claim_map" in accumulated:
-        st.divider()
-        render_claim_map(ClaimMap.model_validate(accumulated["claim_map"]))
-
-    if "section_drafts" in accumulated:
-        st.divider()
-        render_diff_view(accumulated["section_drafts"])
-
-    if "audit" in accumulated and "new_sources" in accumulated:
-        st.divider()
-        st.subheader("Sources")
-        tab1, tab2 = st.tabs(["Existing Citations", "New Sources"])
-        with tab1:
-            for s in accumulated["audit"]:
-                icon = "✅" if s["recommendation"] == "USE" else "⚠️" if s["recommendation"] == "WEAK" else "❌"
-                status_note = f" ({s['status']})" if s["status"] != "LIVE" else ""
-                st.write(
-                    f"{icon} [{s['overall_score']:.1f}] `{s['domain_type']}`{status_note}"
-                    f" — {s['url'][:80]}"
-                )
-                if s.get("claim_support_summary"):
-                    st.caption(f"   {s['claim_support_summary']}")
-        with tab2:
-            for s in accumulated["new_sources"]:
-                st.write(f"➕ [{s['overall_score']:.1f}] `{s['domain_type']}` — {s['url'][:80]}")
-                if s.get("claim_support_summary"):
-                    st.caption(f"   {s['claim_support_summary']}")
-
-    if "proposal" in accumulated:
-        st.divider()
-        render_proposal_panel(EditProposal.model_validate(accumulated["proposal"]))
-    elif "critique" in accumulated:
-        st.divider()
-        render_critique_panel(CritiqueResult.model_validate(accumulated["critique"]))
+    run_and_render(url)
 
 
 if __name__ == "__main__":

@@ -21,27 +21,42 @@ _CORE_DIMENSIONS = {"citation_coverage", "npov", "structural_completeness"}
 def _derive_verdict(
     dimension_results: dict[str, DimensionCritique],
 ) -> tuple[str, str | None]:
-    """Compute overall verdict from per-dimension results."""
+    """Compute overall verdict from per-dimension results.
+
+    PASS   — no failures, or exactly one non-core failure (minor issue, acceptable for incremental edits)
+    REVISE — any core failure, or two or more failures of any kind
+    DISCARD — all three core dimensions fail simultaneously
+    """
     failed = [k for k, v in dimension_results.items() if v.verdict == "FAIL"]
     core_failures = [k for k in failed if k in _CORE_DIMENSIONS]
 
-    if len(core_failures) >= 3:
-        reason = f"Too many core dimension failures: {', '.join(core_failures)}"
+    if len(core_failures) == len(_CORE_DIMENSIONS):
+        reason = f"All core dimensions failed: {', '.join(core_failures)}"
         return "DISCARD", reason
-    if failed:
+    if core_failures or len(failed) >= 2:
         return "REVISE", None
     return "PASS", None
 
 
 class Critic:
-    async def run(self, assembled_draft: str, source_report: str) -> CritiqueResult:
-        cache_ns = f"critic:{cache_key(assembled_draft, source_report)}"
+    async def run(
+        self,
+        assembled_draft: str,
+        source_report: str,
+        sections_edited: list[str] | None = None,
+    ) -> CritiqueResult:
+        cache_ns = f"critic:{cache_key(assembled_draft, source_report, sections_edited)}"
         if cache_ns in cache:
             return CritiqueResult.model_validate(cache[cache_ns])
 
+        edited_note = (
+            f"Sections edited in this pass: {', '.join(sections_edited)}"
+            if sections_edited else "All sections may have been touched."
+        )
         prompt = _PROMPT.format(
-            assembled_draft=assembled_draft[:8000],  # cap to avoid token overflow
+            assembled_draft=assembled_draft,
             source_report=source_report or "No sources available.",
+            sections_edited_note=edited_note,
         )
 
         response = await _client.chat.completions.create(
