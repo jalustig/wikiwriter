@@ -8,6 +8,10 @@ from tools.search import search
 from workers.source_evaluator import SourceEvaluator
 
 
+def _is_allowed_source_url(url: str) -> bool:
+    return "wikimedia.org" not in url and "wikipedia.org" not in url
+
+
 class SourceDiscovery:
     def __init__(self):
         self.evaluator = SourceEvaluator()
@@ -21,7 +25,7 @@ class SourceDiscovery:
         query = f"{claim} {article_title} wikipedia source"
         results = await search(query, max_results=max_candidates)
 
-        urls = [r["url"] for r in results if r.get("url")]
+        urls = [r["url"] for r in results if r.get("url") and _is_allowed_source_url(r["url"])]
         if not urls:
             return []
 
