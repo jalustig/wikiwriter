@@ -11,6 +11,8 @@ from workers.planner import Planner
 from workers.claim_extractor import ClaimExtractor
 from workers.source_evaluator import SourceEvaluator
 from workers.source_discovery import SourceDiscovery
+from workers.draft_writer import DraftWriter, _assemble_source_report
+from workers.synthesis_writer import SynthesisWriter
 
 
 class WikiWriterOrchestrator:
@@ -21,6 +23,8 @@ class WikiWriterOrchestrator:
         self.claim_extractor = ClaimExtractor()
         self.source_evaluator = SourceEvaluator()
         self.source_discovery = SourceDiscovery()
+        self.draft_writer = DraftWriter()
+        self.synthesis_writer = SynthesisWriter()
 
     async def run(self, url: str):
         # Stage 1: Fetch article
@@ -123,5 +127,38 @@ class WikiWriterOrchestrator:
             data={
                 "audit": [r.model_dump() for r in audit_results],
                 "new_sources": [r.model_dump() for r in new_sources],
+            },
+        )
+
+        source_report = _assemble_source_report(audit_results, new_sources)
+
+        # Stage 6: Parallel section drafting
+        n_edit = len(plan.sections_to_edit)
+        yield ProgressEvent(
+            stage="DRAFT",
+            status="running",
+            message=f"Drafting {n_edit} sections in parallel...",
+        )
+        draft_tasks = [
+            self.draft_writer.run(
+                section_plan=s,
+                article=article,
+                source_report=source_report,
+                editor_norms=editorial_risk.editor_imposed_norms,
+            )
+            for s in plan.sections_to_edit
+        ]
+        draft_results = await asyncio.gather(*draft_tasks, return_exceptions=True)
+        section_drafts = [r for r in draft_results if not isinstance(r, Exception)]
+
+        assembled = await self.synthesis_writer.run(article, section_drafts, source_report)
+
+        yield ProgressEvent(
+            stage="DRAFT",
+            status="done",
+            message=f"Drafted {len(section_drafts)} sections; synthesis complete",
+            data={
+                "section_drafts": [d.model_dump() for d in section_drafts],
+                "assembled": assembled,
             },
         )

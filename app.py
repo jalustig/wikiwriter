@@ -2,6 +2,7 @@
 # ABOUTME: Grows incrementally across milestones; each milestone adds new panels.
 
 import asyncio
+import difflib
 
 import plotly.graph_objects as go
 import streamlit as st
@@ -30,6 +31,7 @@ STAGE_LABELS = {
     "PLAN": "Plan edits",
     "CLAIMS": "Extract claims",
     "SOURCES": "Audit & discover sources",
+    "DRAFT": "Draft sections",
 }
 
 RISK_COLORS = {
@@ -166,6 +168,42 @@ def render_plan_chart(
     st.caption(plan.narrative)
 
 
+def render_diff_view(section_drafts: list[dict]) -> None:
+    st.subheader("Section Drafts")
+    if not section_drafts:
+        st.write("No drafts available.")
+        return
+
+    for draft in section_drafts:
+        name = draft["section_name"]
+        orig = draft["original_text"]
+        revised = draft["revised_text"]
+        changes = draft.get("changes_made", [])
+
+        with st.expander(f"**{name}**" + (f" — {changes[0]}" if changes else ""), expanded=False):
+            if changes:
+                st.write("**Changes:**")
+                for c in changes:
+                    st.write(f"- {c}")
+
+            orig_lines = orig.splitlines(keepends=True)
+            rev_lines = revised.splitlines(keepends=True)
+            diff = list(difflib.unified_diff(
+                orig_lines, rev_lines, fromfile="original", tofile="revised", n=3
+            ))
+            if diff:
+                st.code("".join(diff), language="diff")
+            else:
+                st.write("_(no changes)_")
+
+            cites_added = draft.get("citations_added", [])
+            cites_removed = draft.get("citations_removed", [])
+            if cites_added:
+                st.write("**Citations added:**", ", ".join(cites_added))
+            if cites_removed:
+                st.write("**Citations removed:**", ", ".join(cites_removed))
+
+
 CLAIM_STATUS_ICONS = {
     "cited": "✅",
     "undercited": "⚠️",
@@ -263,6 +301,15 @@ def main():
         st.divider()
         claim_map = ClaimMap.model_validate(claims_event.data["claim_map"])
         render_claim_map(claim_map)
+
+    # Render draft diff view
+    draft_event = next(
+        (e for e in reversed(events) if e.stage == "DRAFT" and e.status == "done"),
+        None,
+    )
+    if draft_event and draft_event.data:
+        st.divider()
+        render_diff_view(draft_event.data.get("section_drafts", []))
 
     if "audit" in final_data and "new_sources" in final_data:
         st.divider()
