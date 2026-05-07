@@ -271,11 +271,13 @@ def render_claim_map(claim_map: ClaimMap) -> None:
 def run_and_render(url: str) -> None:
     """
     Stream events from the orchestrator. Each stage runs in a st.status() widget
-    (thinking events appear as italic text; collapses on done). Result panels are
-    appended immediately after each stage widget collapses — true append-only rendering.
+    (thinking events appear as italic text). A completed stage stays expanded until
+    the next stage begins, then collapses — so narration is always readable.
+    Result panels append below the progress section as each stage completes.
     """
     stage_widgets: dict[str, object] = {}
     accumulated: dict = {}  # all done-event data accumulated so far
+    prev_stage: list[str] = []  # mutable cell: the last stage that completed
 
     async def stream():
         async for event in WikiWriterOrchestrator().run(url):
@@ -283,6 +285,9 @@ def run_and_render(url: str) -> None:
             icon, running_label, done_label = STAGE_META.get(stage, ("•", stage, stage))
 
             if stage not in stage_widgets:
+                # Collapse the previous completed stage now that a new one starts
+                if prev_stage:
+                    stage_widgets[prev_stage[0]].update(expanded=False)
                 stage_widgets[stage] = st.status(f"{icon} {running_label}", expanded=True)
             widget = stage_widgets[stage]
 
@@ -296,8 +301,9 @@ def run_and_render(url: str) -> None:
             elif event.status == "done":
                 widget.update(
                     label=f"{icon} {done_label} — {event.message}",
-                    state="complete", expanded=False,
+                    state="complete", expanded=True,  # stays open until next stage
                 )
+                prev_stage[:] = [stage]
                 if event.data:
                     accumulated.update(event.data)
                 _render_inline(event, accumulated)
