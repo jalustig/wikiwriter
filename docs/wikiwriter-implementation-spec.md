@@ -82,26 +82,31 @@ wikiwriter/
 ├── workers/
 │   ├── article_grader.py    # Content quality scorer
 │   ├── editorial_context.py # Edit history + talk page analyzer
+│   ├── planner.py           # Consumes content grade + risk profile; emits improvement plan
 │   ├── claim_extractor.py   # Sentence-level claim parser
 │   ├── source_evaluator.py  # Unified: fetch + read + grade any URL
 │   ├── source_discovery.py  # New source finder (wraps Tavily + evaluator)
-│   ├── draft_writer.py      # Section editor
-│   ├── critic.py            # Evaluator — gpt-5.4
+│   ├── draft_writer.py      # Section editor; also handles critique-driven revision
+│   ├── synthesis_writer.py  # Integrates section drafts; improves flow and lead
+│   ├── critic.py            # Evaluator — gpt-5.5
 │   └── output_grader.py     # Scores final draft, same rubric as grader
 ├── tools/
 │   ├── wikipedia.py         # MediaWiki API: article, history, talk page
 │   ├── wayback.py           # waybackpy wrapper — newest snapshot lookup for dead URLs
 │   ├── search.py            # Tavily wrapper
-│   └── fetcher.py           # httpx fetch → BeautifulSoup → clean text (should cache both raw HTML and clean text!)
+│   ├── fetcher.py           # httpx fetch → BeautifulSoup → clean text; Playwright fallback for JS/CAPTCHA
+│   └── pdf.py               # PDF → text extraction (pypdf); called by fetcher when content-type is PDF
 ├── cache.py                 # diskcache setup and helpers
 ├── models.py                # Pydantic schemas for all worker I/O
 ├── prompts/                 # One .txt file per worker
 │   ├── article_grader.txt
 │   ├── editorial_context.txt
+│   ├── planner.txt
 │   ├── claim_extractor.txt
 │   ├── source_evaluator.txt
 │   ├── source_discovery.txt
 │   ├── draft_writer.txt
+│   ├── synthesis_writer.txt
 │   ├── critic.txt
 │   └── output_grader.txt
 ├── .env
@@ -138,6 +143,13 @@ beautifulsoup4>=4.12.0     # HTML parsing for source content extraction
 lxml>=5.0.0                # Fast HTML parser (bs4 backend)
 mwparserfromhell>=0.6.6    # Wikitext parsing
 
+# JavaScript rendering + CAPTCHA fallback
+playwright>=1.40.0         # Headless Chromium; run `playwright install chromium` after pip install
+                           # Used by fetcher.py when httpx gets a CAPTCHA or JS-rendered page
+
+# PDF extraction
+pypdf>=4.0.0               # PDF → text; called by tools/pdf.py when content-type is application/pdf
+
 # Wikipedia
 wikipedia-api>=0.6.0       # MediaWiki REST API wrapper
 
@@ -150,6 +162,9 @@ tavily-python>=0.3.0       # Tavily search client
 
 # Caching
 diskcache>=5.6.0           # Persistent disk-based cache
+
+# Visualization
+plotly>=5.20.0             # Interactive charts for the plan visualization panel
 
 # Utilities
 difflib                    # stdlib — no install needed
@@ -180,7 +195,12 @@ def cache_key(*args) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 def cached(namespace: str):
-    """Decorator: cache the result of any async function."""
+    """Decorator: cache the result of any async function.
+    
+    Use only on standalone async functions (tools/fetcher.py, tools/search.py, etc.).
+    Do NOT apply to instance methods — self will pollute the cache key.
+    For workers that need caching, call cache_key() and check/set cache manually.
+    """
     def decorator(fn):
         async def wrapper(*args, **kwargs):
             key = f"{namespace}:{cache_key(*args, **kwargs)}"
@@ -228,9 +248,67 @@ async def fetch_readable(url: str) -> str:
     return soup.get_text(separator="\n", strip=True)[:8000]  # token budget
 ```
 
-Notes on fetcher:
+### Fetcher fallback chain
 
-- It should fall back to Playwright if we get a CAPTCHA or if it is unable to render e.g. due to Javascript
+`tools/fetcher.py` attempts each strategy in order, stopping at the first success:
+
+1. **httpx** — fast async GET; works for most static pages
+2. **Playwright** — headless Chromium via `playwright.async_api`; used when httpx returns a 403/429, a CAPTCHA page, or when the response body is a JS skeleton with no readable content (heuristic: `<body>` text < 200 chars)
+3. **Wayback Machine** — if both httpx and Playwright fail, falls back to `tools/wayback.py` for an archived copy
+
+**PDF handling** — `tools/fetcher.py` checks the `Content-Type` response header (and the URL extension as a fallback). If the content is `application/pdf`, it passes the raw bytes to `tools/pdf.py` which uses `pypdf` to extract text page-by-page, joining with newlines, capped at the same 8000-character token budget. The PDF text is cached under `page_text` just like HTML-extracted text.
+
+---
+
+## Planner
+
+The planner is the brain of the pipeline. It receives two independent signals — content grade and editorial risk profile — and emits a prioritized improvement plan. **This is the most important worker in the system: a weak plan means weak edits.** The planner prompt deserves the most iteration.
+
+### Planner Inputs
+
+- `WikiArticle` — full article structure
+- `ContentGrade` — overall score, section-level scores, dimension scores
+- `EditorialRiskProfile` — risk tier, flip-flopped sections, editor-imposed norms, active disputes
+
+### Planner Logic
+
+```python
+# workers/planner.py
+
+class Planner:
+    async def run(
+        self,
+        article: WikiArticle,
+        content_grade: ContentGrade,
+        editorial_risk: EditorialRiskProfile,
+    ) -> ImprovementPlan:
+        prompt = self.prompts.planner.format(
+            article_title=article.title,
+            section_names=article.sections,
+            section_grades=content_grade.section_grades,
+            dimension_scores=content_grade.dimension_scores,
+            overall_score=content_grade.overall_score,
+            risk_tier=editorial_risk.risk_tier,
+            flip_flopped_sections=editorial_risk.flip_flopped_sections,
+            active_disputes=editorial_risk.active_disputes,
+            editor_imposed_norms=editorial_risk.editor_imposed_norms,
+            dominant_editor=editorial_risk.dominant_editor,
+        )
+        response = await openai_call(model=DRAFT_MODEL, prompt=prompt)
+        return ImprovementPlan.model_validate_json(response)
+```
+
+### Planner Prompt (`prompts/planner.txt`)
+
+The planner prompt must encode these rules:
+
+- **CRITICAL risk tier** → return empty `sections_to_edit`, explain in narrative
+- **Flip-flopped sections** → always appear in `sections_excluded` with reason "flip-flop conflict"
+- **Section below quality threshold** → include in `sections_to_edit`; assign edit mode(s) based on which dimension scores are low (low citation coverage → Claim Attribution; low NPOV → Section Rewrite; low citation quality → Citation Repair)
+- **Editor-imposed norms** → note in narrative that draft writers will receive these as constraints
+- Output must be valid JSON matching `ImprovementPlan`
+
+The planner is the primary unit test target: test it against a matrix of (content grade, risk tier) combinations before building anything else.
 
 ---
 
@@ -240,7 +318,7 @@ There is no separate domain classifier tool. Any URL — whether an existing cit
 
 Note that the source evaluator must ALSO extract relevant information from the page related to the article topic.
 
-Further, if the source is a PDF (or if it is an article which has a PDF copy for download), then we must call another tool which translates the PDF into a text form so that we can extract information from the document.
+PDF sources are handled transparently: `fetcher.fetch_readable()` detects `application/pdf` content-type and routes through `tools/pdf.py` automatically. The source evaluator receives clean text regardless of the source format.
 
 ```python
 # workers/source_evaluator.py
@@ -291,8 +369,11 @@ class SourceEvaluator:
         except Exception:
             return None
 
-    @cached("source_eval")
     async def llm_evaluate(self, url, page_text, claim, context, status) -> SourceEvaluation:
+        # Manual cache check — can't use @cached decorator on instance methods
+        key = f"source_eval:{cache_key(url, page_text, claim, context, status)}"
+        if key in cache:
+            return SourceEvaluation.model_validate(cache[key]["cached_value"])
         prompt = self.prompts.source_evaluator.format(
             url=url,
             page_text=page_text,
@@ -301,7 +382,9 @@ class SourceEvaluator:
             status=status,
         )
         response = await openai_call(model=DRAFT_MODEL, prompt=prompt)
-        return SourceEvaluation.model_validate_json(response)
+        result = SourceEvaluation.model_validate_json(response)
+        cache[key] = {"url": url, "claim": claim[:100], "cached_value": result.model_dump()}
+        return result
 ```
 
 ### Source Evaluator Prompt
@@ -380,7 +463,7 @@ Return only valid JSON:
 }
 ```
 
-Note that we should not use the "score" blindly, but we should have the LLM evaluate these signals on 3 axes: trustworthiness, accuracy, relevance
+The five scored dimensions map to three reader concerns: **trustworthiness** (domain_type + credibility), **accuracy** (claim_support), and **currency** (age + accessibility). The prompt asks the LLM to reason about each dimension independently before producing scores — not to produce scores and then rationalize them.
 
 ---
 
@@ -448,6 +531,86 @@ async def run(self, url: str):
         data={"critique": critique}
     )
 ```
+
+### Plan Visualization
+
+The improvement plan is rendered as a **horizontal bar chart** — one row per section, bars colored by action status, edit mode labels overlaid on the bar. This gives the operator an immediate visual read of what the agent decided to do and why, before any source work or drafting begins.
+
+```python
+# app.py — plan chart helper
+
+import plotly.graph_objects as go
+
+# Color scheme
+STATUS_COLORS = {
+    "editing":  "#2196F3",   # blue  — being edited
+    "excluded": "#F44336",   # red   — excluded (flip-flop or risk)
+    "ok":       "#4CAF50",   # green — no action needed (high quality)
+}
+
+MODE_SHORT = {
+    "Citation Repair":     "Cite Fix",
+    "Claim Attribution":   "Cite Add",
+    "Section Expansion":   "Expand",
+    "Section Rewrite":     "Rewrite",
+    "Contradiction Integration": "Contradict",
+    "Synthesis Pass":      "Synthesis",
+}
+
+def render_plan_chart(article, content_grade, plan, risk):
+    sections = article.sections  # ordered list of section names
+    scores = content_grade.section_grades  # name → score (0–10)
+
+    editing_names = {s.name for s in plan.sections_to_edit}
+    excluded_names = set(plan.sections_excluded)
+    flip_names = set(risk.flip_flopped_sections)
+
+    rows = []
+    for name in sections:
+        score = scores.get(name, 5.0)
+        if name in excluded_names or name in flip_names:
+            status = "excluded"
+            label = "⛔ flip-flop" if name in flip_names else "⛔ excluded"
+        elif name in editing_names:
+            status = "editing"
+            section_plan = next(s for s in plan.sections_to_edit if s.name == name)
+            short_modes = " + ".join(MODE_SHORT.get(m, m) for m in section_plan.modes)
+            label = f"✏️ {short_modes}"
+        else:
+            status = "ok"
+            label = "✓ no changes"
+        rows.append({"name": name, "score": score, "status": status, "label": label})
+
+    fig = go.Figure()
+    for status, color in STATUS_COLORS.items():
+        subset = [r for r in rows if r["status"] == status]
+        if not subset:
+            continue
+        fig.add_trace(go.Bar(
+            name=status.capitalize(),
+            y=[r["name"] for r in subset],
+            x=[r["score"] for r in subset],
+            orientation="h",
+            marker_color=color,
+            text=[r["label"] for r in subset],
+            textposition="inside",
+            hovertemplate="%{y}: %{x:.1f}/10<br>%{text}<extra></extra>",
+        ))
+
+    fig.update_layout(
+        barmode="overlay",
+        xaxis=dict(title="Section quality (0–10)", range=[0, 10]),
+        yaxis=dict(autorange="reversed"),   # top section at top
+        height=max(300, len(rows) * 35),
+        margin=dict(l=10, r=10, t=10, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(f"Narrative: {plan.narrative}")
+```
+
+The chart reads left to right as quality score (0–10). Red bars are excluded sections; blue bars are sections being edited, labelled with their assigned mode(s); green bars are sections the agent deemed high enough quality to leave alone.
 
 ### Streamlit App Structure
 
@@ -540,9 +703,17 @@ if run_button and url:
         col3.metric("Quality Delta", f"+{proposal.quality_delta:.1f}")
 
         # Improvement plan
-        with st.expander("Improvement Plan", expanded=True):
+        # Plan visualization — section quality chart with edit mode annotations
+        st.subheader("Improvement Plan")
+        render_plan_chart(
+            article=proposal.article,
+            content_grade=proposal.input_grade,
+            plan=proposal.improvement_plan,
+            risk=proposal.editorial_risk,
+        )
+        with st.expander("Section details", expanded=False):
             for section in proposal.improvement_plan.sections_to_edit:
-                st.write(f"✅ **{section.name}** — {', '.join(section.modes)}")
+                st.write(f"✅ **{section.name}** — {', '.join(section.modes)}: {section.rationale}")
             for section_name, reason in proposal.improvement_plan.exclusion_reasons.items():
                 st.write(f"⛔ **{section_name}** — excluded: {reason}")
 
@@ -598,6 +769,24 @@ class ProgressEvent(BaseModel):
     message: str
     data: dict | None = None
 
+# --- Wikipedia article representation ---
+
+class Citation(BaseModel):
+    id: str               # cite key or index within the article
+    url: str
+    claim_text: str       # the sentence this citation supports
+
+class WikiArticle(BaseModel):
+    title: str
+    url: str
+    wikitext: str
+    sections: list[str]   # section names in order
+    section_texts: dict[str, str]  # section name → raw wikitext
+    citations: list[Citation]
+    assessment_class: str | None  # stub / start / C / B / A / FA
+
+# --- Source evaluation ---
+
 class SourceEvaluation(BaseModel):
     url: str
     status: Literal["LIVE", "ARCHIVED", "DEAD"]
@@ -609,6 +798,9 @@ class SourceEvaluation(BaseModel):
     publication_date: str | None
     claim_support_summary: str
     recommendation: Literal["USE", "WEAK", "REJECT"]
+    further_claims: list[str] = []  # other article-relevant claims found in this source
+
+# --- Grading ---
 
 class ContentGrade(BaseModel):
     overall_score: float
@@ -616,6 +808,8 @@ class ContentGrade(BaseModel):
     section_grades: dict[str, float]
     dimension_scores: dict[str, float]
     narrative: str
+
+# --- Editorial risk ---
 
 class EditorialRiskProfile(BaseModel):
     risk_tier: Literal["LOW", "MODERATE", "HIGH", "CRITICAL"]
@@ -629,6 +823,8 @@ class EditorialRiskProfile(BaseModel):
     wikiproject_affiliations: list[str]
     risk_narrative: str
 
+# --- Planning ---
+
 class SectionPlan(BaseModel):
     name: str
     modes: list[str]
@@ -640,10 +836,17 @@ class ImprovementPlan(BaseModel):
     exclusion_reasons: dict[str, str]
     narrative: str
 
+# --- Claims ---
+
 class Claim(BaseModel):
     text: str
     status: Literal["cited", "undercited", "uncited", "consensus-uncited"]
     citation_id: str | None
+
+class ClaimMap(BaseModel):
+    claims: list[Claim]
+
+# --- Drafting ---
 
 class SectionDraft(BaseModel):
     section_name: str
@@ -653,6 +856,8 @@ class SectionDraft(BaseModel):
     citations_added: list[str]
     citations_removed: list[str]
 
+# --- Critique ---
+
 class DimensionCritique(BaseModel):
     verdict: Literal["PASS", "FAIL"]
     notes: str
@@ -660,10 +865,13 @@ class DimensionCritique(BaseModel):
 class CritiqueResult(BaseModel):
     overall_verdict: Literal["PASS", "REVISE", "DISCARD"]
     dimension_results: dict[str, DimensionCritique]
-    revision_instructions: list[str]
+    revision_instructions: list[str]  # passed to draft_writer.revise()
     discard_reason: str | None
 
+# --- Final proposal ---
+
 class EditProposal(BaseModel):
+    article: WikiArticle           # needed by the plan chart for section order
     input_grade: ContentGrade
     output_grade: ContentGrade
     quality_delta: float
@@ -676,6 +884,13 @@ class EditProposal(BaseModel):
     full_diff: str
     disclosure_edit_summary: str
 ```
+
+### Draft writer revision method
+
+`draft_writer.py` exposes two entry points:
+
+- `run(section, source_report, editor_norms)` → `SectionDraft` — initial section draft
+- `revise(assembled_draft, revision_instructions, source_report)` → `str` — takes the full assembled article text, a list of specific revision instructions from the critic, and the source report; returns revised full article text. Uses the same prompt file with a `REVISION_MODE` flag that changes the task framing from "write from scratch" to "fix these specific issues."
 
 ---
 
@@ -768,9 +983,10 @@ class WikiWriterOrchestrator:
             r for r in await asyncio.gather(*draft_tasks, return_exceptions=True)
             if not isinstance(r, Exception)
         ]
-        assembled = self.assemble_full_draft(article, section_drafts)
         yield ProgressEvent(stage="DRAFT", status="done",
-            message=f"Drafts complete for {len(section_drafts)} sections")
+            message=f"Drafts complete for {len(section_drafts)} sections; running synthesis pass...")
+        # Synthesis writer integrates section edits, sharpens the lead, removes redundancy
+        assembled = await self.workers.synthesis_writer.run(article, section_drafts, source_report)
 
         # Stage 7: Critique loop (max 2 revisions)
         yield ProgressEvent(stage="CRITIQUE", status="running",
@@ -851,25 +1067,31 @@ If a source URL has been evaluated in a prior run, the evaluation is retrieved f
 Stop at any level — each is a complete, demoable artifact.
 
 **Level 1 — Differentiating core** *(do this first)*
-- Wikipedia fetch + article parsing
+- `models.py` — all Pydantic schemas; nothing else works without these
+- `cache.py` — diskcache setup
+- `tools/wikipedia.py` — fetch article, edit history, talk page
+- `tools/fetcher.py` — httpx → Playwright fallback → PDF detection
+- `tools/pdf.py` — pypdf text extraction
 - Article grader (LLM)
 - Editorial context analyzer (edit history + talk page)
-- Planner (consumes both, produces risk-aware plan)
-- Streamlit app showing live progress + risk profile + quality grade
+- **Planner** — build and unit-test this before anything else that depends on it
+- Streamlit app showing live progress + risk profile + quality grade + improvement plan
 
 *Why this alone stands out: no other demo reads the human environment before deciding what to touch.*
 
 **Level 2 — Agentic behavior**
-- Source evaluator (unified fetch + LLM grade)
-- diskcache integration
-- Parallel citation audit + source discovery
+- `tools/search.py` — Tavily wrapper
+- Source evaluator (unified fetch + LLM grade + cache)
+- Source discovery worker
+- Parallel citation audit + source discovery in orchestrator
 - Live source results in Streamlit as each worker completes
 
 *Demonstrates: parallelization with clear justification + caching.*
 
 **Level 3 — Full quality loop**
 - Claim extractor
-- Draft writer (section-level, parallel)
+- Draft writer (section-level, parallel) + `revise()` method
+- Synthesis writer (integrates section drafts)
 - Critic (gpt-5.5, different model)
 - Diff view in Streamlit
 
