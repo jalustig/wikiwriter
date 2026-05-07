@@ -1,7 +1,6 @@
 # ABOUTME: Pydantic schemas for all WikiWriter worker inputs and outputs.
 # ABOUTME: Single source of truth for data models — no raw strings between workers.
 
-from __future__ import annotations
 from typing import Literal
 from pydantic import BaseModel
 

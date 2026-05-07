@@ -1,7 +1,6 @@
 # ABOUTME: Persistent disk cache for all expensive external operations.
 # ABOUTME: Cache key is a deterministic SHA-256 hash of inputs. Use @cached only on standalone async functions.
 
-from __future__ import annotations
 import diskcache
 import hashlib
 import json

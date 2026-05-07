@@ -33,4 +33,3 @@ plotly>=5.20.0
 
 # Utilities
 anyio>=4.0.0
-eval_type_backport>=0.1.0
