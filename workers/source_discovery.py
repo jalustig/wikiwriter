@@ -3,7 +3,7 @@
 
 import asyncio
 
-from models import SourceEvaluation
+from models import SourceEvaluation, ArticleSummary
 from tools.search import search
 from workers.source_evaluator import SourceEvaluator
 
@@ -14,6 +14,7 @@ BAD_SOURCES = [
     "fandom.com",
     "facebook.com",
 ]
+
 
 def _is_allowed_source_url(url: str) -> bool:
     for source in BAD_SOURCES:
@@ -30,6 +31,7 @@ class SourceDiscovery:
         self,
         claim: str,
         article_title: str,
+        article_summary: ArticleSummary,
         max_candidates: int = 5,
     ) -> list[SourceEvaluation]:
         query = f"{claim} {article_title} wikipedia source"
@@ -40,7 +42,7 @@ class SourceDiscovery:
             return []
 
         evaluations = await asyncio.gather(
-            *[self.evaluator.evaluate(url, claim, article_title) for url in urls],
+            *[self.evaluator.evaluate(url, article_summary) for url in urls],
             return_exceptions=True,
         )
 

@@ -1,25 +1,34 @@
-# ABOUTME: Orchestrator — runs all workers in sequence and emits ProgressEvents.
-# ABOUTME: Yields events as an async generator; writes a verbose per-run log to logs/.
+# ABOUTME: DAG-based orchestrator — assess WHAT, plan HOW, execute DAG, critique, revise.
+# ABOUTME: Emits ProgressEvents as async generator; writes verbose per-run log to logs/.
 
 import asyncio
+import difflib
 import json
 import os
 import re
 from datetime import datetime, timezone
 
 from cache import get_cache_stats, reset_cache_stats
-from models import ProgressEvent, WikiArticle, ContentGrade, EditorialRiskProfile
-from models import ImprovementPlan, SourceEvaluation, SectionDraft, CritiqueResult, EditProposal
+from dag import DAGExecutor, build_dag
+from models import (
+    ProgressEvent, WikiArticle, ArticleSummary, ContentGrade, EditorialEnvironment,
+    SourceEvaluation, ArticleAssessment, SectionResearch, SectionDraft,
+    CritiqueResult, SectionCritiqueResult, EditSummary, EditProposal, TaskNode,
+)
 from tools.wikipedia import fetch_article
 from workers.article_grader import ArticleGrader
 from workers.editorial_context import EditorialContextAnalyzer
-from workers.planner import Planner
-from workers.claim_extractor import ClaimExtractor
+from workers.summarize_article import summarize_article
+from workers.assess_article import assess_article
+from workers.edit_planner import plan_edits, format_dag_for_display
+from workers.plan_validate import validate_plan
+from workers.research_section import research_section
 from workers.source_evaluator import SourceEvaluator
-from workers.source_discovery import SourceDiscovery
-from workers.draft_writer import DraftWriter, _assemble_source_report, _build_diff
-from workers.synthesis_writer import SynthesisWriter
-from workers.critic import Critic
+from workers.draft_writer import DraftWriter, _build_diff
+from workers.synthesis_writer import SynthesisWriter, _assemble_with_drafts
+from workers.critique_section import critique_section
+from workers.aggregate_critique import aggregate_critique
+from workers.summarize_edit import summarize_edit
 from workers.output_grader import OutputGrader
 from workers.narrator import narrate
 
@@ -28,17 +37,45 @@ def _think(stage: str, message: str) -> ProgressEvent:
     return ProgressEvent(stage=stage, status="thinking", message=message)
 
 
+def _assemble_source_report(
+    audit: list[SourceEvaluation],
+    new_sources: list[SourceEvaluation],
+    section_research: list[SectionResearch] | None = None,
+) -> str:
+    lines: list[str] = []
+    usable = [s for s in audit if s.recommendation in ("USE", "WEAK")]
+    if usable:
+        lines.append("EXISTING CITATIONS (usable):")
+        for s in usable:
+            tag = "WEAK" if s.recommendation == "WEAK" else "USE"
+            lines.append(f"  [{tag} {s.overall_score:.1f}] {s.url}")
+            lines.append(f"    {s.topic_coverage_summary}")
+        lines.append("")
+    if new_sources:
+        lines.append("NEW SOURCES (from research):")
+        for s in new_sources:
+            lines.append(f"  [{s.overall_score:.1f}] {s.url}")
+            lines.append(f"    {s.topic_coverage_summary}")
+        lines.append("")
+    if section_research:
+        for sr in section_research:
+            if sr.new_sources:
+                lines.append(f"SECTION '{sr.section_name}' SOURCES:")
+                for s in sr.new_sources:
+                    lines.append(f"  [{s.overall_score:.1f}] {s.url}")
+                    lines.append(f"    {s.topic_coverage_summary}")
+                lines.append("")
+    return "\n".join(lines)
+
+
 class WikiWriterOrchestrator:
+
     def __init__(self):
-        self.article_grader = ArticleGrader()
-        self.editorial_analyzer = EditorialContextAnalyzer()
-        self.planner = Planner()
-        self.claim_extractor = ClaimExtractor()
+        self.grader = ArticleGrader()
+        self.env_analyzer = EditorialContextAnalyzer()
         self.source_evaluator = SourceEvaluator()
-        self.source_discovery = SourceDiscovery()
         self.draft_writer = DraftWriter()
         self.synthesis_writer = SynthesisWriter()
-        self.critic = Critic()
         self.output_grader = OutputGrader()
 
     async def run(self, url: str):
@@ -54,25 +91,18 @@ class WikiWriterOrchestrator:
                 log.write(json.dumps(entry) + "\n")
                 log.flush()
 
-            _write({
-                "type": "run_start",
-                "url": url,
-                "started_at": start.isoformat(),
-            })
+            _write({"type": "run_start", "url": url, "started_at": start.isoformat()})
 
             async for event in self._run(url):
                 elapsed = round((datetime.now(timezone.utc) - start).total_seconds(), 2)
-                stats = get_cache_stats()
                 entry: dict = {
                     "type": "event",
                     "t": elapsed,
                     "stage": event.stage,
                     "status": event.status,
                     "message": event.message,
-                    "cache": stats,
+                    "cache": get_cache_stats(),
                 }
-                if event.status == "done" and event.data:
-                    entry["summary"] = self._log_summary(event)
                 _write(entry)
                 yield event
 
@@ -82,439 +112,402 @@ class WikiWriterOrchestrator:
                 "cache": get_cache_stats(),
             })
 
-    def _log_summary(self, event: ProgressEvent) -> dict:
-        """Condense event.data into log-friendly key metrics."""
-        d = event.data or {}
-        if event.stage == "INTAKE":
-            g = d.get("grade", {})
-            r = d.get("risk", {})
-            return {
-                "grade": g.get("letter_grade"), "score": g.get("overall_score"),
-                "risk_tier": r.get("risk_tier"), "revert_rate": r.get("revert_rate_12mo"),
-                "flip_flopped": r.get("flip_flopped_sections", []),
-            }
-        if event.stage == "PLAN":
-            plan = d.get("plan", {})
-            return {
-                "sections_to_edit": [s["name"] for s in plan.get("sections_to_edit", [])],
-                "sections_excluded": plan.get("sections_excluded", []),
-            }
-        if event.stage == "CLAIMS":
-            claims = d.get("claim_map", {}).get("claims", [])
-            from collections import Counter
-            counts = Counter(c["status"] for c in claims)
-            return dict(counts)
-        if event.stage == "SOURCES":
-            audit = d.get("audit", [])
-            new = d.get("new_sources", [])
-            recs = [a["recommendation"] for a in audit]
-            from collections import Counter
-            return {"audit_breakdown": dict(Counter(recs)), "new_sources_found": len(new)}
-        if event.stage == "CRITIQUE":
-            c = d.get("critique", {})
-            return {
-                "verdict": c.get("overall_verdict"),
-                "dimensions": {k: v["verdict"] for k, v in c.get("dimension_results", {}).items()},
-            }
-        if event.stage == "GRADE":
-            p = d.get("proposal", {})
-            return {
-                "input_grade": p.get("input_grade", {}).get("letter_grade"),
-                "output_grade": p.get("output_grade", {}).get("letter_grade"),
-                "quality_delta": p.get("quality_delta"),
-            }
-        return {}
-
     async def _run(self, url: str):
-        # ── Stage 1: Fetch ────────────────────────────────────────────────
+        # ── FETCH ─────────────────────────────────────────────────────────────
         yield ProgressEvent(stage="FETCH", status="running", message=f"Fetching {url}...")
         article = await fetch_article(url)
-        n_sections = len(article.sections)
-        n_citations = len(article.citations)
-        intro_text = next((v for k, v in article.section_texts.items() if not k), "")
         thought = await narrate("fetch", {
             "article_title": article.title,
             "assessment_class": article.assessment_class or "unrated",
-            "n_sections": n_sections,
-            "n_citations": n_citations,
+            "n_sections": len(article.sections),
+            "n_citations": len(article.citations),
             "sections": article.sections[:12],
-            "intro_text": intro_text[:600],
+            "intro_text": next((v for k, v in article.section_texts.items() if not k), "")[:600],
         })
         if thought:
             yield _think("FETCH", thought)
         yield ProgressEvent(
-            stage="FETCH",
-            status="done",
-            message=f"'{article.title}' — {n_sections} sections, {n_citations} citations",
+            stage="FETCH", status="done",
+            message=f"'{article.title}' — {len(article.sections)} sections, {len(article.citations)} citations",
         )
 
-        # ── Stage 2: Intake (parallel) ────────────────────────────────────
-        yield ProgressEvent(
-            stage="INTAKE",
-            status="running",
-            message="Assessing article quality and reading the editorial history...",
-        )
-        content_grade, editorial_risk = await asyncio.gather(
-            self.article_grader.run(article),
-            self.editorial_analyzer.run(article),
-        )
-        worst_dim = min(content_grade.dimension_scores, key=content_grade.dimension_scores.get)
-        thought = await narrate("quality_and_risk", {
-            "article_title": article.title,
-            "grade": content_grade.letter_grade,
-            "overall_score": content_grade.overall_score,
-            "dimension_scores": content_grade.dimension_scores,
-            "weakest_dimension": worst_dim,
-            "weakest_score": content_grade.dimension_scores[worst_dim],
-            "risk_tier": editorial_risk.risk_tier,
-            "revert_rate": editorial_risk.revert_rate_12mo,
-            "edit_velocity": editorial_risk.edit_velocity,
-            "flip_flopped_sections": editorial_risk.flip_flopped_sections,
-            "grade_narrative": content_grade.narrative,
-        })
-        if thought:
-            yield _think("INTAKE", thought)
-        grade_summary = f"{content_grade.letter_grade} ({content_grade.overall_score:.1f}/10)"
-        yield ProgressEvent(
-            stage="INTAKE",
-            status="done",
-            message=f"Grade: {grade_summary} | Risk: {editorial_risk.risk_tier}",
-            data={"grade": content_grade.model_dump(), "risk": editorial_risk.model_dump()},
-        )
+        # ── GATHER EVIDENCE (parallel) ────────────────────────────────────────
+        yield ProgressEvent(stage="GATHER", status="running", message="Gathering evidence in parallel...")
 
-        # ── Stage 3: Planning ─────────────────────────────────────────────
-        yield ProgressEvent(stage="PLAN", status="running", message="Planning edits...")
-        plan = await self.planner.run(article, content_grade, editorial_risk)
-        thought = await narrate("planning", {
-            "article_title": article.title,
-            "sections_to_edit": [
-                {"name": s.name, "modes": s.modes, "rationale": s.rationale}
-                for s in plan.sections_to_edit
-            ],
-            "sections_excluded": plan.sections_excluded,
-            "exclusion_reasons": plan.exclusion_reasons,
-            "plan_narrative": plan.narrative,
-        })
-        if thought:
-            yield _think("PLAN", thought)
-        n_edit = len(plan.sections_to_edit)
-        n_excl = len(plan.sections_excluded)
-        yield ProgressEvent(
-            stage="PLAN",
-            status="done",
-            message=f"Editing {n_edit} sections, leaving {n_excl} untouched",
-            data={"plan": plan.model_dump(), "article": article.model_dump()},
-        )
+        # summarize_article must run first
+        article_summary = await summarize_article(article)
+        yield _think("GATHER", f"Topic: {article_summary.topic[:120]}")
 
-        if not plan.sections_to_edit:
-            yield ProgressEvent(
-                stage="PLAN",
-                status="error",
-                message=f"Nothing to edit — {editorial_risk.risk_tier} risk tier.",
-            )
-            return
+        # Now all parallel tasks
+        n_cit = min(len(article.citations), 20)
+        yield _think("GATHER", f"Grading article, reading editorial history, evaluating {n_cit} citations...")
 
-        # ── Stage 4: Claim extraction ─────────────────────────────────────
-        yield ProgressEvent(stage="CLAIMS", status="running", message="Tagging claims by citation status...")
-        claim_map = await self.claim_extractor.run(article, plan)
-        uncited_claims = [c for c in claim_map.claims if c.status in ("uncited", "undercited")]
-        n_claims = len(claim_map.claims)
-        n_uncited = len(uncited_claims)
-        thought = await narrate("claims", {
-            "n_claims_total": n_claims,
-            "n_uncited": n_uncited,
-            "sample_uncited": [c.text[:80] for c in uncited_claims[:3]],
-        })
-        if thought:
-            yield _think("CLAIMS", thought)
-        yield ProgressEvent(
-            stage="CLAIMS",
-            status="done",
-            message=f"{n_claims} claims tagged — {n_uncited} need sources",
-            data={"claim_map": claim_map.model_dump()},
-        )
+        async def _eval_source(citation):
+            return await self.source_evaluator.evaluate(citation.url, article_summary)
 
-        # ── Stage 5: Source audit and discovery ───────────────────────────
-        n_cit = len(article.citations)
-        n_discover = len(uncited_claims[:5])
-        total_tasks = n_cit + n_discover
-        yield ProgressEvent(
-            stage="SOURCES",
-            status="running",
-            message=f"Evaluating sources (0/{total_tasks})...",
-        )
-        yield _think("SOURCES", (
-            f"Auditing {n_cit} existing citations for quality, recency and relevance "
-            f"while searching for new sources to cover {n_discover} uncited claims."
-        ))
-
-        async def _tagged(kind: str, coro):
-            try:
-                return kind, await coro
-            except Exception as exc:
-                return kind, exc
-
-        all_tasks = (
-            [asyncio.create_task(_tagged("audit", self.source_evaluator.evaluate(
-                c.url, c.claim_text, article.title))) for c in article.citations] +
-            [asyncio.create_task(_tagged("discovery", self.source_discovery.find_sources(
-                claim.text, article.title))) for claim in uncited_claims[:5]]
-        )
-
-        audit_results: list[SourceEvaluation] = []
-        discovery_results_nested: list = []
-        completed = 0
-
-        for future in asyncio.as_completed(all_tasks):
-            kind, result = await future
-            completed += 1
-
-            if not isinstance(result, Exception):
-                if kind == "audit":
-                    audit_results.append(result)
-                    r = result
-                    if r.status == "DEAD":
-                        yield _think("SOURCES", f"Dead link: {r.url}")
-                    else:
-                        note = r.claim_support_summary[:70] if r.claim_support_summary else ""
-                        msg = f"{r.domain_type} [{r.overall_score:.1f}] → {r.recommendation}"
-                        yield _think("SOURCES", msg + (f" — {note}" if note else ""))
-                elif kind == "discovery":
-                    discovery_results_nested.append(result)
-                    for s in result:
-                        yield _think("SOURCES", (
-                            f"New source: {s.domain_type} [{s.overall_score:.1f}] "
-                            f"— {s.claim_support_summary[:160]}"
-                        ))
-
-            yield ProgressEvent(
-                stage="SOURCES",
-                status="running",
-                message=f"Evaluating sources ({completed}/{total_tasks})...",
-                data={"source_result": result.model_dump()} if not isinstance(result, Exception)
-                and kind == "audit" else None,
-            )
-
-        new_sources = [s for group in discovery_results_nested for s in group]
-        n_usable = sum(1 for r in audit_results if r.recommendation == "USE")
-        n_dead = sum(1 for r in audit_results if r.status == "DEAD")
-        thought = await narrate("sources_complete", {
-            "n_audited": len(audit_results),
-            "n_usable": n_usable,
-            "n_dead": n_dead,
-            "n_new": len(new_sources),
-            "rejected": [r.url[:50] for r in audit_results if r.recommendation == "REJECT"],
-        })
-        if thought:
-            yield _think("SOURCES", thought)
-        yield ProgressEvent(
-            stage="SOURCES",
-            status="done",
-            message=f"{n_usable} usable citations, {len(new_sources)} new sources found",
-            data={
-                "audit": [r.model_dump() for r in audit_results],
-                "new_sources": [r.model_dump() for r in new_sources],
-            },
-        )
-
-        source_report = _assemble_source_report(audit_results, new_sources)
-
-        # ── Stage 6: Drafting ─────────────────────────────────────────────
-        n_edit = len(plan.sections_to_edit)
-        yield ProgressEvent(
-            stage="DRAFT",
-            status="running",
-            message=f"Writing {n_edit} section drafts...",
-        )
-        for s in plan.sections_to_edit:
-            yield _think("DRAFT", f"Drafting '{s.name}' — {', '.join(s.modes)}: {s.rationale}")
-
-        draft_tasks = [
-            self.draft_writer.run(
-                section_plan=s,
-                article=article,
-                source_report=source_report,
-                editor_norms=editorial_risk.editor_imposed_norms,
-            )
-            for s in plan.sections_to_edit
+        grade_task = asyncio.create_task(self.grader.run(article))
+        env_task = asyncio.create_task(self.env_analyzer.run(article))
+        source_tasks = [
+            asyncio.create_task(_eval_source(c))
+            for c in article.citations[:20]
         ]
-        draft_results = await asyncio.gather(*draft_tasks, return_exceptions=True)
-        section_drafts = [r for r in draft_results if not isinstance(r, Exception)]
-        assembled = await self.synthesis_writer.run(article, section_drafts, source_report)
 
-        thought = await narrate("drafts_complete", {
-            "n_drafted": len(section_drafts),
-            "n_failed": n_edit - len(section_drafts),
-            "sections": [d.section_name for d in section_drafts],
-            "changes_summary": [d.changes_made[:2] for d in section_drafts],
-        })
-        if thought:
-            yield _think("DRAFT", thought)
+        content_grade, environment = await asyncio.gather(grade_task, env_task)
+        source_results = await asyncio.gather(*source_tasks, return_exceptions=True)
+        source_evals = [r for r in source_results if isinstance(r, SourceEvaluation)]
+
+        n_usable = sum(1 for s in source_evals if s.recommendation == "USE")
+        n_dead = sum(1 for s in source_evals if s.status == "DEAD")
+
         yield ProgressEvent(
-            stage="DRAFT",
-            status="done",
-            message=f"{len(section_drafts)} sections drafted and merged",
+            stage="GATHER", status="done",
+            message=f"Grade: {content_grade.letter_grade} ({content_grade.overall_score:.1f}) | "
+                    f"Caution: {environment.caution_level} | "
+                    f"Sources: {n_usable} usable, {n_dead} dead",
             data={
-                "section_drafts": [d.model_dump() for d in section_drafts],
-                "assembled": assembled,
+                "grade": content_grade.model_dump(),
+                "environment": environment.model_dump(),
+                "audit": [s.model_dump() for s in source_evals],
+                "article": article.model_dump(),
+                "article_summary": article_summary.model_dump(),
             },
         )
 
-        # ── Stage 7: Critique ─────────────────────────────────────────────
-        yield ProgressEvent(stage="CRITIQUE", status="running", message="Reviewing draft quality...")
-        sections_edited = [d.section_name for d in section_drafts]
-        critique, final_draft, critique_events = await self._critique_loop(
-            assembled, source_report, sections_edited=sections_edited
+        # ── ASSESS (WHAT) ────────────────────────────────────────────────────
+        yield ProgressEvent(stage="ASSESS", status="running", message="Assessing what the article needs...")
+        assessment = await assess_article(
+            article, article_summary, content_grade, environment, source_evals
         )
-        for e in critique_events:
-            yield e
+        sections_to_edit = [s for s in assessment.sections if s.action == "EDIT"]
+        thought = (
+            f"{assessment.importance.tier} article — {assessment.article_class}. "
+            f"Editing {len(sections_to_edit)} sections. "
+            f"Effort: {assessment.effort_ceiling}."
+        )
+        yield _think("ASSESS", thought)
         yield ProgressEvent(
-            stage="CRITIQUE",
-            status="done",
-            message=f"Verdict: {critique.overall_verdict}",
-            data={"critique": critique.model_dump()},
+            stage="ASSESS", status="done",
+            message=f"{assessment.importance.tier} | {assessment.article_class} | "
+                    f"{len(sections_to_edit)} sections to edit | {assessment.effort_ceiling} effort",
+            data={"assessment": assessment.model_dump()},
         )
 
-        if critique.overall_verdict == "DISCARD":
+        if not sections_to_edit:
             yield ProgressEvent(
-                stage="CRITIQUE",
-                status="error",
-                message=f"Edit discarded: {critique.discard_reason}",
+                stage="ASSESS", status="error",
+                message="Nothing to edit — assessment found no sections worth improving.",
             )
             return
 
-        # ── Stage 8: Grading ──────────────────────────────────────────────
+        # ── PLAN → VALIDATE → EXECUTE → CRITIQUE loop ─────────────────────────
+        all_section_drafts: list[SectionDraft] = []
+        all_section_research: list[SectionResearch] = []
+        final_critique: CritiqueResult | None = None
+        assembled: str = ""
+
+        for cycle in range(3):  # max 2 revision cycles (0, 1, 2 → PARTIAL_ACCEPT on 2)
+            critique_for_planner = final_critique if cycle > 0 else None
+
+            # ── PLAN ────────────────────────────────────────────────────────
+            cycle_label = f" (revision {cycle})" if cycle > 0 else ""
+            yield ProgressEvent(
+                stage="PLAN", status="running",
+                message=f"Planning tasks{cycle_label}...",
+            )
+            nodes, narrative = await plan_edits(article.title, assessment, critique_for_planner)
+
+            # Validate the plan
+            approved, feedback = await validate_plan(article.title, assessment, nodes)
+            if not approved and cycle == 0:
+                yield _think("PLAN", f"Plan needs revision: {feedback}")
+                # One retry with feedback appended
+                from workers.edit_planner import _revision_context
+                if critique_for_planner is None:
+                    from models import CritiqueResult as CR
+                    feedback_critique = CR(
+                        overall_verdict="REVISE",
+                        revision_instructions=[feedback],
+                    )
+                else:
+                    feedback_critique = critique_for_planner
+                nodes, narrative = await plan_edits(
+                    article.title, assessment, feedback_critique
+                )
+
+            dag_display = format_dag_for_display(nodes, narrative)
+            yield _think("PLAN", dag_display)
+            yield ProgressEvent(
+                stage="PLAN", status="done",
+                message=f"{len(nodes)} tasks planned{cycle_label}",
+                data={
+                    "dag": {nid: {"type": n.type, "params": n.params, "deps": n.deps}
+                            for nid, n in nodes.items()},
+                    "dag_narrative": narrative,
+                },
+            )
+
+            # ── EXECUTE DAG ────────────────────────────────────────────────
+            yield ProgressEvent(stage="EXEC", status="running", message="Executing task DAG...")
+
+            ctx = {
+                "article": article,
+                "article_summary": article_summary,
+                "source_evals": source_evals,
+                "editor_norms": environment.editor_imposed_norms,
+            }
+
+            section_research_map: dict[str, SectionResearch] = {}
+            section_draft_map: dict[str, SectionDraft] = {}
+            synthesized: str = ""
+
+            handlers = {
+                "research_section": self._handle_research_section,
+                "draft_section": self._handle_draft_section,
+                "draft_full_article": self._handle_draft_full_article,
+                "synthesize": self._handle_synthesize,
+            }
+
+            executor = DAGExecutor(handlers)
+            async for dag_event in executor.run(nodes, ctx):
+                if dag_event.status == "running":
+                    yield _think("EXEC", dag_event.message)
+                elif dag_event.status == "done":
+                    node_id = dag_event.message.split(":")[0].strip()
+                    node = nodes.get(node_id)
+                    if node and node.result is not None:
+                        if node.type == "research_section":
+                            sr: SectionResearch = node.result
+                            section_research_map[sr.section_name] = sr
+                            n_claims = len([c for c in sr.claim_map.claims
+                                           if c.status in ("uncited", "undercited")])
+                            yield _think("EXEC", (
+                                f"research_section({sr.section_name}): "
+                                f"{n_claims} uncited claims, "
+                                f"{len(sr.new_sources)} new sources found"
+                            ))
+                        elif node.type == "draft_section":
+                            sd: SectionDraft = node.result
+                            section_draft_map[sd.section_name] = sd
+                            changes = sd.changes_made[:2] if sd.changes_made else ["revised"]
+                            yield _think("EXEC", (
+                                f"draft_section({sd.section_name}): "
+                                + "; ".join(changes)
+                            ))
+                        elif node.type == "synthesize":
+                            synthesized = node.result
+                elif dag_event.status == "error":
+                    yield _think("EXEC", f"⚠ {dag_event.message}")
+
+            cycle_drafts = list(section_draft_map.values())
+            assembled = synthesized or _assemble_with_drafts(article, cycle_drafts)
+
+            if cycle == 0:
+                all_section_drafts = cycle_drafts
+                all_section_research = list(section_research_map.values())
+            else:
+                # Merge: update changed sections
+                existing = {d.section_name: d for d in all_section_drafts}
+                existing.update(section_draft_map)
+                all_section_drafts = list(existing.values())
+
+            yield ProgressEvent(
+                stage="EXEC", status="done",
+                message=f"{len(cycle_drafts)} sections drafted",
+                data={"section_drafts": [d.model_dump() for d in all_section_drafts]},
+            )
+
+            # ── CRITIQUE ────────────────────────────────────────────────────
+            yield ProgressEvent(stage="CRITIQUE", status="running", message="Critiquing each section...")
+
+            source_report = _assemble_source_report(source_evals, [], all_section_research)
+
+            section_critique_tasks = [
+                critique_section(
+                    article.title,
+                    draft.section_name,
+                    article.section_texts.get(draft.section_name, ""),
+                    draft.revised_text,
+                    source_report,
+                )
+                for draft in cycle_drafts
+            ]
+            section_critique_results: list[SectionCritiqueResult] = await asyncio.gather(
+                *section_critique_tasks, return_exceptions=True
+            )
+            section_critique_results = [
+                r for r in section_critique_results if isinstance(r, SectionCritiqueResult)
+            ]
+
+            for r in section_critique_results:
+                icon = "✓" if r.verdict == "PASS" else "✗"
+                yield _think("CRITIQUE", f"{icon} {r.section_name}: {r.verdict}")
+                if r.issues:
+                    yield _think("CRITIQUE", f"  Issues: {'; '.join(r.issues[:2])}")
+
+            final_critique = await aggregate_critique(
+                article.title, section_critique_results, cycle
+            )
+
+            yield ProgressEvent(
+                stage="CRITIQUE", status="done",
+                message=f"Verdict: {final_critique.overall_verdict}",
+                data={"critique": final_critique.model_dump()},
+            )
+
+            verdict = final_critique.overall_verdict
+
+            if verdict == "DISCARD":
+                yield ProgressEvent(
+                    stage="CRITIQUE", status="error",
+                    message=f"Edit discarded: {final_critique.discard_reason}",
+                )
+                return
+
+            if verdict in ("PASS", "PARTIAL_ACCEPT"):
+                # On PARTIAL_ACCEPT: use passing sections only
+                if verdict == "PARTIAL_ACCEPT" and final_critique.failing_sections:
+                    yield _think("CRITIQUE", (
+                        f"Partial accept: keeping {len(final_critique.passing_sections)} sections, "
+                        f"reverting {len(final_critique.failing_sections)} to original"
+                    ))
+                    # Revert failing sections to original
+                    filtered = [
+                        d for d in all_section_drafts
+                        if d.section_name in final_critique.passing_sections
+                    ]
+                    assembled = _assemble_with_drafts(article, filtered)
+                    all_section_drafts = filtered
+                break
+
+            if cycle >= 2:
+                # Exhausted revision budget → PARTIAL_ACCEPT
+                final_critique.overall_verdict = "PARTIAL_ACCEPT"
+                yield _think("CRITIQUE", "Revision budget exhausted — accepting passing sections.")
+                filtered = [
+                    d for d in all_section_drafts
+                    if d.section_name in (final_critique.passing_sections or
+                                         [d.section_name for d in all_section_drafts])
+                ]
+                assembled = _assemble_with_drafts(article, filtered)
+                all_section_drafts = filtered
+                break
+
+            # REVISE: continue loop
+            yield _think("CRITIQUE", (
+                f"Revising {len(final_critique.failing_sections)} sections: "
+                + ", ".join(final_critique.failing_sections)
+            ))
+
+        # ── GRADE OUTPUT ────────────────────────────────────────────────────
         yield ProgressEvent(stage="GRADE", status="running", message="Scoring the final output...")
-        output_grade = await self.output_grader.run(final_draft, article)
+        output_grade = await self.output_grader.run(assembled, article)
         quality_delta = output_grade.overall_score - content_grade.overall_score
-        thought = await narrate("grade_complete", {
-            "input_grade": content_grade.letter_grade,
-            "input_score": content_grade.overall_score,
-            "output_grade": output_grade.letter_grade,
-            "output_score": output_grade.overall_score,
-            "quality_delta": quality_delta,
-            "dimension_deltas": {
-                k: round(output_grade.dimension_scores.get(k, 0) - v, 1)
-                for k, v in content_grade.dimension_scores.items()
-            },
-        })
-        if thought:
-            yield _think("GRADE", thought)
         yield ProgressEvent(
-            stage="GRADE",
-            status="done",
+            stage="GRADE", status="done",
             message=f"Output: {output_grade.letter_grade} (Δ {quality_delta:+.1f})",
         )
 
-        proposal = self._build_proposal(
-            article=article,
-            content_grade=content_grade,
-            output_grade=output_grade,
-            editorial_risk=editorial_risk,
-            plan=plan,
-            audit_results=audit_results,
-            new_sources=new_sources,
-            section_drafts=section_drafts,
-            critique=critique,
-            final_draft=final_draft,
-        )
+        # ── SUMMARIZE EDIT ────────────────────────────────────────────────
+        yield ProgressEvent(stage="SUMMARIZE", status="running", message="Writing editorial summary...")
+        edit_summary = await summarize_edit(article, assessment, all_section_drafts, final_critique)
         yield ProgressEvent(
-            stage="GRADE",
-            status="done",
-            message="Edit proposal ready for review.",
-            data={"proposal": proposal.model_dump()},
+            stage="SUMMARIZE", status="done",
+            message="Editorial summary written",
         )
 
-    async def _critique_loop(
-        self,
-        draft: str,
-        source_report: str,
-        sections_edited: list[str] | None = None,
-        cycles: int = 0,
-    ) -> tuple[CritiqueResult, str, list[ProgressEvent]]:
-        events: list[ProgressEvent] = []
-
-        if cycles >= 2:
-            events.append(_think("CRITIQUE", (
-                "Draft failed critique twice — issues are too fundamental to fix by revision. Discarding."
-            )))
-            return CritiqueResult(
-                overall_verdict="DISCARD",
-                dimension_results={},
-                revision_instructions=[],
-                discard_reason="Failed critique twice — fundamental issues not resolvable by revision",
-            ), draft, events
-
-        if cycles > 0:
-            events.append(_think("CRITIQUE", f"Revision cycle {cycles}: re-checking the draft."))
-
-        critique = await self.critic.run(draft, source_report, sections_edited=sections_edited)
-
-        failed_dims = [k for k, v in critique.dimension_results.items() if v.verdict == "FAIL"]
-        passed_dims = [k for k, v in critique.dimension_results.items() if v.verdict == "PASS"]
-
-        for dim in passed_dims:
-            events.append(_think("CRITIQUE", (
-                f"✓ {dim.replace('_', ' ').title()}: {critique.dimension_results[dim].notes}"
-            )))
-        for dim in failed_dims:
-            events.append(_think("CRITIQUE", (
-                f"✗ {dim.replace('_', ' ').title()}: {critique.dimension_results[dim].notes}"
-            )))
-
-        if critique.overall_verdict == "PASS":
-            events.append(_think("CRITIQUE", "All quality checks passed. Draft is ready."))
-            return critique, draft, events
-
-        if critique.overall_verdict == "REVISE":
-            n_issues = len(critique.revision_instructions)
-            plural = "s" if n_issues > 1 else ""
-            msg = f"Needs revision — {n_issues} issue{plural} to address. Revising..."
-            events.append(_think("CRITIQUE", msg))
-            revised = await self.draft_writer.revise(draft, critique.revision_instructions, source_report)
-            sub_critique, sub_draft, sub_events = await self._critique_loop(
-                revised, source_report, sections_edited=sections_edited, cycles=cycles + 1
-            )
-            return sub_critique, sub_draft, events + sub_events
-
-        return critique, draft, events
-
-    def _build_proposal(
-        self,
-        article: WikiArticle,
-        content_grade: ContentGrade,
-        output_grade: ContentGrade,
-        editorial_risk: EditorialRiskProfile,
-        plan: ImprovementPlan,
-        audit_results: list[SourceEvaluation],
-        new_sources: list[SourceEvaluation],
-        section_drafts: list[SectionDraft],
-        critique: CritiqueResult,
-        final_draft: str,
-    ) -> EditProposal:
+        # ── BUILD PROPOSAL ─────────────────────────────────────────────────
         original_text = "\n\n".join(article.section_texts.get(s, "") for s in article.sections)
-        full_diff = _build_diff(original_text, final_draft)
+        full_diff = _build_diff(original_text, assembled)
 
-        edited_sections = [d.section_name for d in section_drafts if d.changes_made]
-        summary_parts = [f"AI-assisted edit: improved {', '.join(edited_sections[:3])}"]
-        if len(edited_sections) > 3:
-            summary_parts.append(f"and {len(edited_sections) - 3} more sections")
-        new_urls = [s.url for s in new_sources[:3]]
-        if new_urls:
-            summary_parts.append(f"Added sources: {', '.join(new_urls)}")
-        summary_parts.append("([[Wikipedia:Bots/Requests for approval/WikiWriter|WikiWriter AI]])")
+        all_new_sources = [s for sr in all_section_research for s in sr.new_sources]
 
-        return EditProposal(
+        proposal = EditProposal(
             article=article,
             input_grade=content_grade,
             output_grade=output_grade,
-            quality_delta=round(output_grade.overall_score - content_grade.overall_score, 2),
-            editorial_risk=editorial_risk,
-            improvement_plan=plan,
-            source_audit=audit_results,
-            new_sources=new_sources,
-            section_drafts=section_drafts,
-            critique=critique,
+            quality_delta=round(quality_delta, 2),
+            editorial_environment=environment,
+            assessment=assessment,
+            source_audit=source_evals,
+            new_sources=all_new_sources,
+            section_drafts=all_section_drafts,
+            critique=final_critique,
+            edit_summary=edit_summary,
             full_diff=full_diff,
-            disclosure_edit_summary=". ".join(summary_parts),
         )
+        yield ProgressEvent(
+            stage="GRADE", status="done",
+            message="Edit proposal ready.",
+            data={"proposal": proposal.model_dump()},
+        )
+
+    # ── DAG task handlers ─────────────────────────────────────────────────────
+
+    async def _handle_research_section(
+        self, params: dict, dep_results: dict, ctx: dict
+    ) -> SectionResearch:
+        section_name = params["section"]
+        return await research_section(
+            ctx["article"],
+            section_name,
+            ctx["article_summary"],
+        )
+
+    async def _handle_draft_section(
+        self, params: dict, dep_results: dict, ctx: dict
+    ) -> SectionDraft:
+        section_name = params["section"]
+        mode = params.get("mode", "CiteFix")
+        article: WikiArticle = ctx["article"]
+        article_summary: ArticleSummary = ctx["article_summary"]
+
+        # Collect sources from research_section dependencies
+        section_research_list: list[SectionResearch] = []
+        audit: list[SourceEvaluation] = ctx.get("source_evals", [])
+
+        for dep_id, dep_result in dep_results.items():
+            if isinstance(dep_result, SectionResearch):
+                section_research_list.append(dep_result)
+
+        source_report = _assemble_source_report(audit, [], section_research_list)
+
+        from models import SectionPlan
+        section_plan = SectionPlan(
+            name=section_name,
+            modes=[mode],
+            rationale=f"Mode: {mode}",
+        )
+        return await self.draft_writer.run(
+            section_plan=section_plan,
+            article=article,
+            source_report=source_report,
+            editor_norms=ctx.get("editor_norms", []),
+        )
+
+    async def _handle_draft_full_article(
+        self, params: dict, dep_results: dict, ctx: dict
+    ) -> str:
+        """Full article rewrite — used when revision_scope=FULL_ARTICLE."""
+        article: WikiArticle = ctx["article"]
+        audit: list[SourceEvaluation] = ctx.get("source_evals", [])
+        source_report = _assemble_source_report(audit, [], None)
+        assembled = _assemble_with_drafts(article, [])
+        return await self.synthesis_writer.run(article, [], source_report)
+
+    async def _handle_synthesize(
+        self, params: dict, dep_results: dict, ctx: dict
+    ) -> str:
+        article: WikiArticle = ctx["article"]
+        audit: list[SourceEvaluation] = ctx.get("source_evals", [])
+
+        # Collect all section drafts from dependencies
+        drafts: list[SectionDraft] = []
+        section_research_list: list[SectionResearch] = []
+        for dep_result in dep_results.values():
+            if isinstance(dep_result, SectionDraft):
+                drafts.append(dep_result)
+            elif isinstance(dep_result, SectionResearch):
+                section_research_list.append(dep_result)
+
+        source_report = _assemble_source_report(audit, [], section_research_list)
+        return await self.synthesis_writer.run(article, drafts, source_report)

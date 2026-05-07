@@ -1,7 +1,7 @@
 # ABOUTME: Pydantic schemas for all WikiWriter worker inputs and outputs.
 # ABOUTME: Single source of truth for data models — no raw strings between workers.
 
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel
 
 
@@ -37,9 +37,9 @@ class SourceEvaluation(BaseModel):
     author: str | None = None
     publication: str | None = None
     publication_date: str | None = None
-    claim_support_summary: str
+    topic_coverage_summary: str      # what aspects of the topic this source covers
     recommendation: Literal["USE", "WEAK", "REJECT"]
-    further_claims: list[str] = []
+    claims: list[str] = []           # factual claims about the topic found in this source
 
 
 class ContentGrade(BaseModel):
@@ -50,6 +50,7 @@ class ContentGrade(BaseModel):
     narrative: str
 
 
+# --- v1 model kept for planner hard-rules tests ---
 class EditorialRiskProfile(BaseModel):
     risk_tier: Literal["LOW", "MODERATE", "HIGH", "CRITICAL"]
     revert_rate_12mo: float
@@ -63,6 +64,54 @@ class EditorialRiskProfile(BaseModel):
     risk_narrative: str
 
 
+# --- v2 editorial model ---
+class EditorialEnvironment(BaseModel):
+    revert_rate_12mo: float
+    edit_velocity: int
+    dominant_editor: str | None = None
+    active_topics: list[str] = []
+    flip_flopped_sections: list[str] = []
+    active_disputes: list[dict] = []
+    resolved_disputes: list[dict] = []
+    editor_imposed_norms: list[str] = []
+    policies_and_restrictions: list[str] = []
+    wikiproject_affiliations: list[str] = []
+    environment_narrative: str = ""
+    caution_level: Literal["LOW", "MODERATE", "HIGH", "CRITICAL"] = "LOW"
+
+
+# --- v2 article summary ---
+class ArticleSummary(BaseModel):
+    topic: str    # what this article is about, in 1-2 sentences
+    scope: str    # what is included and what is not
+
+
+# --- v2 assessment models ---
+class ArticleImportance(BaseModel):
+    tier: Literal["VITAL", "MAJOR", "NOTABLE", "MINOR"]
+    rationale: str
+    expected_depth: str
+
+
+class SectionDecision(BaseModel):
+    name: str
+    action: Literal["EDIT", "SKIP"]
+    edit_type: Literal["EXPAND", "FACT_CHECK", "PRUNE", "CITE_REPAIR"] | None = None
+    rationale: str
+
+
+class ArticleAssessment(BaseModel):
+    importance: ArticleImportance
+    article_class: Literal["STUB", "DEVELOPING", "COMPLETE", "OVER_DETAILED"]
+    effort_ceiling: Literal["FULL", "MODERATE", "LIGHT"]
+    edit_scope: Literal["WHOLE_ARTICLE", "SPECIFIC_SECTIONS"]
+    sections: list[SectionDecision]
+    primary_weaknesses: list[str]
+    source_quality_summary: str
+    edit_rationale: str
+
+
+# --- v1 planning models (kept for backward compat) ---
 class SectionPlan(BaseModel):
     name: str
     modes: list[str]
@@ -86,6 +135,12 @@ class ClaimMap(BaseModel):
     claims: list[Claim]
 
 
+class SectionResearch(BaseModel):
+    section_name: str
+    claim_map: ClaimMap
+    new_sources: list[SourceEvaluation] = []
+
+
 class SectionDraft(BaseModel):
     section_name: str
     original_text: str
@@ -100,11 +155,30 @@ class DimensionCritique(BaseModel):
     notes: str
 
 
+class SectionCritiqueResult(BaseModel):
+    section_name: str
+    verdict: Literal["PASS", "FAIL"]
+    dimensions: dict[str, DimensionCritique] = {}
+    issues: list[str] = []
+    suggested_fix: str = ""
+
+
 class CritiqueResult(BaseModel):
-    overall_verdict: Literal["PASS", "REVISE", "DISCARD"]
-    dimension_results: dict[str, DimensionCritique]
-    revision_instructions: list[str]
+    overall_verdict: Literal["PASS", "REVISE", "PARTIAL_ACCEPT", "DISCARD"]
+    dimension_results: dict[str, DimensionCritique] = {}
+    revision_instructions: list[str] = []
     discard_reason: str | None = None
+    # v2 section-level fields
+    section_results: dict[str, SectionCritiqueResult] = {}
+    revision_scope: Literal["SECTIONS", "FULL_ARTICLE"] | None = None
+    passing_sections: list[str] = []
+    failing_sections: list[str] = []
+
+
+class EditSummary(BaseModel):
+    narrative: str
+    sections_changed: list[str]
+    disclosure_line: str
 
 
 class EditProposal(BaseModel):
@@ -112,11 +186,21 @@ class EditProposal(BaseModel):
     input_grade: ContentGrade
     output_grade: ContentGrade
     quality_delta: float
-    editorial_risk: EditorialRiskProfile
-    improvement_plan: ImprovementPlan
+    editorial_environment: EditorialEnvironment
+    assessment: ArticleAssessment
     source_audit: list[SourceEvaluation]
     new_sources: list[SourceEvaluation]
     section_drafts: list[SectionDraft]
     critique: CritiqueResult
+    edit_summary: EditSummary
     full_diff: str
-    disclosure_edit_summary: str
+
+
+# --- DAG task types ---
+class TaskNode(BaseModel):
+    id: str
+    type: str
+    params: dict[str, Any] = {}
+    deps: list[str] = []
+    status: Literal["pending", "running", "done", "failed"] = "pending"
+    result: Any = None

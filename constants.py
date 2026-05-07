@@ -2,12 +2,13 @@
 # ABOUTME: STAGE_META maps stage name → (icon, running_label, done_label).
 
 STAGE_META = {
-    "FETCH":    ("🌐", "Reading article…",        "Read article"),
-    "INTAKE":   ("📊", "Assessing quality…",       "Quality assessed"),
-    "PLAN":     ("🗺️",  "Planning edits…",          "Edit plan ready"),
-    "CLAIMS":   ("🔎", "Tagging claims…",          "Claims tagged"),
-    "SOURCES":  ("🔍", "Evaluating sources…",      "Sources evaluated"),
-    "DRAFT":    ("✏️",  "Writing drafts…",          "Drafts written"),
-    "CRITIQUE": ("🔬", "Reviewing draft…",         "Draft reviewed"),
-    "GRADE":    ("📈", "Scoring output…",          "Output scored"),
+    "FETCH":     ("🌐", "Reading article…",           "Read article"),
+    "GATHER":    ("📊", "Gathering evidence…",         "Evidence gathered"),
+    "ASSESS":    ("🧠", "Assessing what's needed…",    "Assessment complete"),
+    "PLAN":      ("🗺️",  "Planning tasks…",             "Task plan ready"),
+    "EXEC":      ("✏️",  "Executing task DAG…",         "Tasks complete"),
+    "CRITIQUE":  ("🔬", "Critiquing sections…",        "Critique done"),
+    "GRADE":     ("📈", "Scoring output…",             "Output scored"),
+    "SUMMARIZE": ("📝", "Writing editorial summary…",  "Summary written"),
+    "DAG":       ("⚙️",  "Running…",                   "Done"),
 }

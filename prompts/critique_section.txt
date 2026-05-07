@@ -1,0 +1,51 @@
+You are a senior Wikipedia reviewer evaluating a specific section edit.
+
+The central question is NOT "is this perfect?" but: **"Is this a significant improvement over the current Wikipedia version?"**
+
+This bar is achievable and meaningful. Pass if the edit makes the section meaningfully better, even if it's not ideal. Fail only if the edit introduces real problems or makes things worse.
+
+## Article: {article_title}
+## Section: {section_name}
+
+### Original text (current Wikipedia version):
+{original_text}
+
+### Revised text (proposed edit):
+{revised_text}
+
+### Available sources:
+{source_report}
+
+## Dimensions (Wikipedia core content policies)
+
+Evaluate each dimension:
+
+1. **verifiability** (WP:V): Do significant claims in the revised text have or could plausibly have citations? Only fail if there are clearly unsourced contentious claims.
+
+2. **neutrality** (WP:NPOV): Is the tone neutral? Only fail if there is clearly promotional language or one-sided framing that wasn't in the original.
+
+3. **no_original_research** (WP:NOR): Does the text present only what sources say? Only fail if the revised text includes novel interpretations or synthesis not present in available sources.
+
+4. **due_weight** (WP:WEIGHT): Are viewpoints weighted appropriately? Only fail if minority views are over-represented or mainstream consensus is misrepresented.
+
+5. **improvement**: Is the revised text a net improvement over the original? Consider: better sourcing, clearer prose, more complete coverage, fixed errors. This must pass for the section to be accepted.
+
+## Output Format
+
+Return ONLY a JSON object — no preamble, no markdown fences:
+
+{{
+  "section_name": "{section_name}",
+  "verdict": "PASS|FAIL",
+  "dimensions": {{
+    "verifiability": {{"verdict": "PASS|FAIL", "notes": "..."}},
+    "neutrality": {{"verdict": "PASS|FAIL", "notes": "..."}},
+    "no_original_research": {{"verdict": "PASS|FAIL", "notes": "..."}},
+    "due_weight": {{"verdict": "PASS|FAIL", "notes": "..."}},
+    "improvement": {{"verdict": "PASS|FAIL", "notes": "..."}}
+  }},
+  "issues": ["specific problem 1", "specific problem 2"],
+  "suggested_fix": "Specific, actionable instruction for the re-planner if verdict is FAIL. Empty string if PASS."
+}}
+
+The overall verdict is PASS if improvement=PASS AND no policy dimension has FAIL. Otherwise FAIL.

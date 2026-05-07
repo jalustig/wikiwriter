@@ -14,7 +14,7 @@ import openai
 from dotenv import load_dotenv
 
 from cache import cache, cache_key
-from models import WikiArticle, EditorialRiskProfile
+from models import WikiArticle, EditorialRiskProfile, EditorialEnvironment
 from tools.wikipedia import fetch_edit_history, fetch_talk_page
 
 _BOT_PATTERN = re.compile(r'\bbot\b', re.IGNORECASE)
@@ -100,7 +100,7 @@ def _compute_risk_tier(
     dominant_editor: Optional[str],
     edit_velocity: int,
 ) -> str:
-    """Compute risk tier from deterministic metrics."""
+    """Compute risk tier from deterministic metrics (kept for v1 planner compatibility)."""
     if revert_rate > 0.30 and len(flip_flopped) > 0:
         return "CRITICAL"
     if len(flip_flopped) > 0 or (dominant_editor and revert_rate > 0.15) or len(active_disputes) >= 2:
@@ -108,6 +108,23 @@ def _compute_risk_tier(
     if revert_rate > 0.15 or len(active_disputes) == 1 or dominant_editor:
         return "MODERATE"
     return "LOW"
+
+
+def _compute_caution_level(
+    revert_rate: float,
+    flip_flopped: list[str],
+    active_disputes: list[dict],
+    dominant_editor: Optional[str],
+    edit_velocity: int,
+    llm_caution: str = "LOW",
+) -> str:
+    """Merge deterministic metrics with LLM-derived caution level."""
+    deterministic = _compute_risk_tier(
+        revert_rate, flip_flopped, active_disputes, dominant_editor, edit_velocity
+    )
+    # Take the higher of the two
+    order = ["LOW", "MODERATE", "HIGH", "CRITICAL"]
+    return order[max(order.index(deterministic), order.index(llm_caution))]
 
 
 class EditorialContextAnalyzer:
@@ -118,10 +135,10 @@ class EditorialContextAnalyzer:
         with open(Path(__file__).parent.parent / "prompts" / "editorial_context.txt") as f:
             self.prompt_template = f.read()
 
-    async def run(self, article: WikiArticle) -> EditorialRiskProfile:
-        key = f"editorial_context:{cache_key(article.title, article.url)}"
+    async def run(self, article: WikiArticle) -> EditorialEnvironment:
+        key = f"editorial_env:{cache_key(article.title, article.url)}"
         if key in cache:
-            return EditorialRiskProfile.model_validate(cache[key])
+            return EditorialEnvironment.model_validate(cache[key])
 
         edit_history, talk_page_text = await asyncio.gather(
             fetch_edit_history(article.title),
@@ -144,30 +161,36 @@ class EditorialContextAnalyzer:
                 "active_disputes": [],
                 "resolved_disputes": [],
                 "editor_imposed_norms": [],
+                "policies_and_restrictions": [],
                 "wikiproject_affiliations": [],
-                "risk_narrative": "The talk page is empty; no editorial disputes or norms are documented.",
+                "active_topics": [],
+                "caution_level": "LOW",
+                "environment_narrative": "The talk page is empty; no editorial disputes or norms are documented.",
             }
 
-        # Stage 3: combine and compute final risk tier
-        risk_tier = _compute_risk_tier(
+        # Stage 3: compute caution_level from deterministic metrics + talk page
+        caution_level = _compute_caution_level(
             metrics["revert_rate_12mo"],
             flip_flopped,
             talk_data["active_disputes"],
             metrics["dominant_editor"],
             metrics["edit_velocity"],
+            talk_data.get("caution_level", "LOW"),
         )
 
-        profile = EditorialRiskProfile(
-            risk_tier=risk_tier,
+        profile = EditorialEnvironment(
             revert_rate_12mo=metrics["revert_rate_12mo"],
             edit_velocity=metrics["edit_velocity"],
             dominant_editor=metrics["dominant_editor"],
+            active_topics=talk_data.get("active_topics", []),
             flip_flopped_sections=flip_flopped,
             active_disputes=talk_data["active_disputes"],
             resolved_disputes=talk_data["resolved_disputes"],
             editor_imposed_norms=talk_data["editor_imposed_norms"],
+            policies_and_restrictions=talk_data.get("policies_and_restrictions", []),
             wikiproject_affiliations=talk_data["wikiproject_affiliations"],
-            risk_narrative=talk_data["risk_narrative"],
+            environment_narrative=talk_data.get("environment_narrative", talk_data.get("risk_narrative", "")),
+            caution_level=caution_level,
         )
         cache.set(key, profile.model_dump(), expire=3600)
         return profile

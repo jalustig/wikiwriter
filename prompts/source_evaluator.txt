@@ -1,11 +1,11 @@
-You are a Wikipedia source evaluator. Your task is to assess whether a web page is a reliable source for a specific claim.
+You are a Wikipedia source evaluator. Assess whether a web page is a reliable source for a Wikipedia article on the given topic.
 
 ## Source Details
 
 URL: {url}
 Status: {status}
-Claim to support: {claim}
-Article context: {context}
+Article topic: {topic}
+Article scope: {scope}
 
 ## Page Content
 
@@ -24,12 +24,12 @@ Score each dimension from 0 to 10. Higher is better.
    - other_news (smaller news outlets, blogs with editorial process) → 4
    - other (personal sites, social media, unknown) → 2
 
-2. **claim_support** (0–10): Does this page directly support the specific claim?
-   - 10 = directly states or proves the claim with data/quotes
-   - 7 = strongly implies or provides strong supporting evidence
-   - 5 = tangentially related, partial support
-   - 2 = barely relevant
-   - 0 = does not support the claim at all
+2. **topic_relevance** (0–10): How relevant is this page to the article's topic?
+   - 10 = directly and substantially covers the article topic
+   - 7 = covers significant aspects of the topic with useful facts
+   - 5 = tangentially related, some useful information
+   - 2 = barely relevant to the topic
+   - 0 = unrelated to the topic
 
 3. **age** (0–10): How current is the source?
    - 10 = published current year (2026) or undated evergreen reference
@@ -58,7 +58,7 @@ Return ONLY a JSON object with this exact schema — no preamble, no markdown fe
   "domain_type": "academic|government|established_news|reference|specialist|other_news|other",
   "scores": {{
     "domain_type": 0.0,
-    "claim_support": 0.0,
+    "topic_relevance": 0.0,
     "age": 0.0,
     "credibility": 0.0,
     "accessibility": 0.0
@@ -66,9 +66,9 @@ Return ONLY a JSON object with this exact schema — no preamble, no markdown fe
   "author": "Author name or null if not identifiable",
   "publication": "Publication or outlet name or null",
   "publication_date": "YYYY-MM-DD or YYYY or null if not found",
-  "claim_support_summary": "One sentence: what does this source actually say about the claim?",
-  "further_claims": ["Other relevant facts found in this source that could support Wikipedia article claims"]
+  "topic_coverage_summary": "One sentence: what does this source cover about the article topic?",
+  "claims": ["Specific factual claims from this source that could support the Wikipedia article"]
 }}
 
-The `claim_support_summary` must be exactly one sentence describing what the source says (or does not say) about the claim.
-The `further_claims` list should contain 0–5 other interesting factual claims found in this source that might be useful for the Wikipedia article.
+The `topic_coverage_summary` must be exactly one sentence describing what the source covers (or does not cover) about the article topic.
+The `claims` list should contain 0–5 specific, citable factual claims found in this source that might be useful for the Wikipedia article.

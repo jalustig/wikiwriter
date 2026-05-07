@@ -5,14 +5,14 @@ from models import SourceEvaluation
 from workers.draft_writer import _assemble_source_report, _build_diff
 
 
-def _make_source(url, score, recommendation, claim_support_summary, status="LIVE"):
+def _make_source(url, score, recommendation, topic_coverage_summary, status="LIVE"):
     return SourceEvaluation(
         url=url,
         status=status,
         domain_type="established_news",
-        scores={k: score for k in ("domain_type", "claim_support", "age", "credibility", "accessibility")},
+        scores={k: score for k in ("domain_type", "topic_relevance", "age", "credibility", "accessibility")},
         overall_score=score,
-        claim_support_summary=claim_support_summary,
+        topic_coverage_summary=topic_coverage_summary,
         recommendation=recommendation,
     )
 

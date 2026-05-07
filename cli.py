@@ -9,8 +9,8 @@ import sys
 
 from constants import STAGE_META
 from models import (
-    WikiArticle, ContentGrade, EditorialRiskProfile,
-    ImprovementPlan, ClaimMap, EditProposal,
+    WikiArticle, ContentGrade, EditorialEnvironment, ArticleAssessment,
+    EditProposal, CritiqueResult, TaskNode,
 )
 from orchestrator import WikiWriterOrchestrator
 
@@ -25,18 +25,21 @@ def _sep(title: str = "") -> None:
         print("\n" + "─" * _W)
 
 
-def _print_risk(risk: EditorialRiskProfile) -> None:
-    _sep("Editorial Risk")
-    print(f"  Tier: {risk.risk_tier}")
-    print(f"  Revert rate (12mo): {risk.revert_rate_12mo:.1%}  |  Edit velocity: {risk.edit_velocity}")
-    if risk.dominant_editor:
-        print(f"  Dominant editor: {risk.dominant_editor}")
-    if risk.flip_flopped_sections:
-        print(f"  Flip-flopped: {', '.join(risk.flip_flopped_sections)}")
-    if risk.editor_imposed_norms:
-        for norm in risk.editor_imposed_norms:
+def _print_environment(env: EditorialEnvironment) -> None:
+    _sep("Editorial Environment")
+    print(f"  Caution: {env.caution_level}")
+    print(f"  Revert rate (12mo): {env.revert_rate_12mo:.1%}  |  Edit velocity: {env.edit_velocity}")
+    if env.dominant_editor:
+        print(f"  Dominant editor: {env.dominant_editor}")
+    if env.flip_flopped_sections:
+        print(f"  Flip-flopped: {', '.join(env.flip_flopped_sections)}")
+    if env.editor_imposed_norms:
+        for norm in env.editor_imposed_norms:
             print(f"  Norm: {norm}")
-    print(f"  {risk.risk_narrative}")
+    if env.policies_and_restrictions:
+        for policy in env.policies_and_restrictions:
+            print(f"  Policy: {policy}")
+    print(f"  {env.environment_narrative}")
 
 
 def _print_grade(grade: ContentGrade) -> None:
@@ -48,42 +51,38 @@ def _print_grade(grade: ContentGrade) -> None:
     print(f"  {grade.narrative}")
 
 
-def _print_plan(
-    article: WikiArticle,
-    grade: ContentGrade,
-    plan: ImprovementPlan,
-    risk: EditorialRiskProfile,
-) -> None:
-    _sep("Improvement Plan")
-    editing = {s.name: s for s in plan.sections_to_edit}
-    excluded = set(plan.sections_excluded)
-    flip = set(risk.flip_flopped_sections)
-    for name in article.sections:
-        score = grade.section_grades.get(name, 5.0)
-        if name in flip:
-            print(f"  ⛔ {name:<40} {score:.1f}  (flip-flop)")
-        elif name in excluded:
-            print(f"  ⛔ {name:<40} {score:.1f}  (excluded)")
-        elif name in editing:
-            modes = ", ".join(editing[name].modes)
-            print(f"  ✏️  {name:<39} {score:.1f}  [{modes}]")
+def _print_assessment(assessment: ArticleAssessment) -> None:
+    _sep("Article Assessment")
+    print(f"  Importance: {assessment.importance.tier} — {assessment.importance.rationale}")
+    print(f"  Class: {assessment.article_class} | Effort: {assessment.effort_ceiling} | Scope: {assessment.edit_scope}")
+    print(f"\n  Edit rationale: {assessment.edit_rationale}")
+    if assessment.primary_weaknesses:
+        print("\n  Primary weaknesses:")
+        for w in assessment.primary_weaknesses:
+            print(f"    • {w}")
+    print(f"\n  Per-section decisions:")
+    for s in assessment.sections:
+        if s.action == "EDIT":
+            print(f"    ✏️  {s.name:<40} [{s.edit_type}] — {s.rationale}")
         else:
-            print(f"  ✓  {name:<40} {score:.1f}")
-    print(f"\n  {plan.narrative}")
+            print(f"    ✓  {s.name:<40} SKIP — {s.rationale}")
 
 
-def _print_claims(claim_map: ClaimMap) -> None:
-    _sep("Claim Map")
-    counts: dict[str, int] = {}
-    for c in claim_map.claims:
-        counts[c.status] = counts.get(c.status, 0) + 1
-    for status, icon in CLAIM_ICONS.items():
-        print(f"  {icon}  {status.replace('-', ' ').title()}: {counts.get(status, 0)}")
-    needs = [c for c in claim_map.claims if c.status in ("uncited", "undercited")]
-    if needs:
-        print("\n  Claims needing sources:")
-        for c in needs:
-            print(f"    {CLAIM_ICONS[c.status]}  {c.text}")
+def _print_dag(dag: dict, narrative: str) -> None:
+    _sep("Task DAG")
+    if not dag:
+        print("  (empty)")
+        return
+
+    # Topological sort for display
+    nodes = {nid: data for nid, data in dag.items()}
+
+    for nid, node in nodes.items():
+        deps = f"  ← {', '.join(node['deps'])}" if node.get('deps') else ""
+        params_str = ", ".join(f"{k}={v}" for k, v in node.get('params', {}).items())
+        print(f"  {nid:<4} {node['type']}({params_str}){deps}")
+
+    print(f"\n  Plan: {narrative}")
 
 
 def _print_sources(audit: list[dict], new_sources: list[dict]) -> None:
@@ -95,14 +94,14 @@ def _print_sources(audit: list[dict], new_sources: list[dict]) -> None:
         )
         note = f" ({s['status']})" if s["status"] != "LIVE" else ""
         print(f"    {icon} [{s['overall_score']:.1f}] {s['domain_type']}{note} — {s['url'][:65]}")
-        if s.get("claim_support_summary"):
-            print(f"       {s['claim_support_summary']}")
+        if s.get("topic_coverage_summary"):
+            print(f"       {s['topic_coverage_summary']}")
     if new_sources:
         print("\n  New sources found:")
         for s in new_sources:
             print(f"    ➕ [{s['overall_score']:.1f}] {s['domain_type']} — {s['url'][:65]}")
-            if s.get("claim_support_summary"):
-                print(f"       {s['claim_support_summary']}")
+            if s.get("topic_coverage_summary"):
+                print(f"       {s['topic_coverage_summary']}")
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -126,7 +125,7 @@ def _print_diffs(section_drafts: list[dict]) -> None:
                 fromfile="original", tofile="revised",
                 lineterm="",
             )
-            for line in list(diff)[2:]:  # skip --- / +++ header
+            for line in list(diff)[2:]:
                 marker = line[0] if line else " "
                 print(f"    {marker} {line[1:]}")
         for label, cites in (
@@ -137,54 +136,71 @@ def _print_diffs(section_drafts: list[dict]) -> None:
                 print(f"    {label}: {', '.join(cites)}")
 
 
-def _print_proposal(proposal: EditProposal) -> None:
+def _print_critique(critique: dict) -> None:
+    _sep("Critique")
+    print(f"  Verdict: {critique['overall_verdict']}")
+    if critique.get("passing_sections"):
+        print(f"  Passing: {', '.join(critique['passing_sections'])}")
+    if critique.get("failing_sections"):
+        print(f"  Failing: {', '.join(critique['failing_sections'])}")
+    for sec_name, sec_result in critique.get("section_results", {}).items():
+        icon = "✓" if sec_result["verdict"] == "PASS" else "✗"
+        print(f"  {icon} {sec_name}")
+        for dim, data in sec_result.get("dimensions", {}).items():
+            dim_icon = "✅" if data["verdict"] == "PASS" else "❌"
+            print(f"       {dim_icon} {dim}: {data['notes']}")
+
+
+def _print_proposal(proposal: dict) -> None:
     _sep("Edit Proposal")
-    ig, og = proposal.input_grade, proposal.output_grade
-    print(f"  Input:  {ig.letter_grade} ({ig.overall_score:.1f}/10)")
-    print(f"  Output: {og.letter_grade} ({og.overall_score:.1f}/10)")
-    print(f"  Delta:  {proposal.quality_delta:+.1f}")
-    print(f"\n  Critique: {proposal.critique.overall_verdict}")
-    for dim, result in proposal.critique.dimension_results.items():
-        icon = "✅" if result.verdict == "PASS" else "❌"
-        print(f"    {icon}  {dim.replace('_', ' ').title()}: {result.notes}")
-    if proposal.critique.discard_reason:
-        print(f"\n  Discard reason: {proposal.critique.discard_reason}")
-    print(f"\n  Edit summary:\n    {proposal.disclosure_edit_summary}")
+    ig = proposal.get("input_grade", {})
+    og = proposal.get("output_grade", {})
+    print(f"  Input:  {ig.get('letter_grade', '?')} ({ig.get('overall_score', 0):.1f}/10)")
+    print(f"  Output: {og.get('letter_grade', '?')} ({og.get('overall_score', 0):.1f}/10)")
+    print(f"  Delta:  {proposal.get('quality_delta', 0):+.1f}")
+
+    edit_summary = proposal.get("edit_summary", {})
+    if edit_summary:
+        _sep("Editorial Summary")
+        print(f"  {edit_summary.get('narrative', '')}")
+        print(f"\n  Edit summary line:\n    {edit_summary.get('disclosure_line', '')}")
 
 
 # ── Terminal equivalent of app.py's _render_inline ────────────────────────────
 
 def _render_results(event, accumulated: dict) -> None:
-    if event.stage == "INTAKE" and "grade" in accumulated and "risk" in accumulated:
-        _print_risk(EditorialRiskProfile.model_validate(accumulated["risk"]))
+    if event.stage == "GATHER" and "grade" in accumulated and "environment" in accumulated:
+        _print_environment(EditorialEnvironment.model_validate(accumulated["environment"]))
         _print_grade(ContentGrade.model_validate(accumulated["grade"]))
+        if "audit" in accumulated:
+            _print_sources(accumulated["audit"], accumulated.get("new_sources", []))
 
-    elif event.stage == "PLAN" and "plan" in accumulated and "article" in accumulated:
-        _print_plan(
-            WikiArticle.model_validate(accumulated["article"]),
-            ContentGrade.model_validate(accumulated["grade"]),
-            ImprovementPlan.model_validate(accumulated["plan"]),
-            EditorialRiskProfile.model_validate(accumulated["risk"]),
-        )
+    elif event.stage == "ASSESS" and "assessment" in accumulated:
+        _print_assessment(ArticleAssessment.model_validate(accumulated["assessment"]))
 
-    elif event.stage == "CLAIMS" and "claim_map" in accumulated:
-        _print_claims(ClaimMap.model_validate(accumulated["claim_map"]))
+    elif event.stage == "PLAN" and "dag" in accumulated:
+        _print_dag(accumulated["dag"], accumulated.get("dag_narrative", ""))
 
-    elif event.stage == "SOURCES" and "audit" in accumulated:
-        _print_sources(accumulated["audit"], accumulated.get("new_sources", []))
-
-    elif event.stage == "DRAFT" and "section_drafts" in accumulated:
+    elif event.stage == "EXEC" and "section_drafts" in accumulated:
         _print_diffs(accumulated["section_drafts"])
 
+    elif event.stage == "CRITIQUE" and "critique" in accumulated:
+        _print_critique(accumulated["critique"])
+
     elif event.stage == "GRADE" and "proposal" in accumulated:
-        _print_proposal(EditProposal.model_validate(accumulated["proposal"]))
+        _print_proposal(accumulated["proposal"])
 
 
 # ── Main stream loop ───────────────────────────────────────────────────────────
 
 _STOP_AFTER_MAP = {
-    "intake": "INTAKE", "plan": "PLAN", "claims": "CLAIMS",
-    "sources": "SOURCES", "draft": "DRAFT", "grade": "GRADE",
+    "fetch": "FETCH",
+    "gather": "GATHER",
+    "assess": "ASSESS",
+    "plan": "PLAN",
+    "exec": "EXEC",
+    "critique": "CRITIQUE",
+    "grade": "GRADE",
 }
 
 
@@ -203,7 +219,6 @@ async def _stream(url: str, stop_after: str | None = None) -> None:
         if event.status == "thinking":
             print(f"   ✦ {event.message}", flush=True)
         elif event.status == "running":
-            # Only print counter-style updates (e.g. "3/20 sources"); skip generic labels
             if "/" in event.message:
                 print(f"   → {event.message}", flush=True)
         elif event.status == "done":
@@ -215,6 +230,7 @@ async def _stream(url: str, stop_after: str | None = None) -> None:
                 return
         elif event.status == "error":
             print(f"✗  {event.message}", file=sys.stderr, flush=True)
+            return
 
 
 def main() -> None:
@@ -222,7 +238,7 @@ def main() -> None:
     parser.add_argument("--article", required=True, metavar="URL", help="Wikipedia article URL")
     parser.add_argument(
         "--stop-after", metavar="STAGE", choices=_STOP_AFTER_MAP,
-        help="Stop after this stage: intake, plan, claims, sources, draft, grade",
+        help=f"Stop after: {', '.join(_STOP_AFTER_MAP.keys())}",
     )
     args = parser.parse_args()
     stop_after = _STOP_AFTER_MAP.get(args.stop_after) if args.stop_after else None

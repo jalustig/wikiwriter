@@ -29,14 +29,14 @@ def _assemble_source_report(
         for s in usable_audit:
             tag = "WEAK" if s.recommendation == "WEAK" else "USE"
             lines.append(f"  [{tag} {s.overall_score:.1f}] {s.url}")
-            lines.append(f"    {s.claim_support_summary}")
+            lines.append(f"    {s.topic_coverage_summary}")
         lines.append("")
 
     if new_sources:
         lines.append("NEW SOURCES FOUND:")
         for s in new_sources:
             lines.append(f"  [{s.overall_score:.1f}] {s.url}")
-            lines.append(f"    {s.claim_support_summary}")
+            lines.append(f"    {s.topic_coverage_summary}")
         lines.append("")
 
     return "\n".join(lines)

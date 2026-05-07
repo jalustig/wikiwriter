@@ -1,5 +1,5 @@
 # ABOUTME: Evaluates any URL as a potential Wikipedia source on 5 quality dimensions.
-# ABOUTME: Used by both citation audit (existing sources) and source discovery (new candidates).
+# ABOUTME: Used by both citation audit (existing sources) and research_section (new candidates).
 
 import json
 import os
@@ -9,13 +9,13 @@ import openai
 from dotenv import load_dotenv
 
 from cache import cache, cache_key
-from models import SourceEvaluation
+from models import SourceEvaluation, ArticleSummary
 from tools.fetcher import fetch_readable
 from tools.wayback import get_archive_url
 
 SOURCE_WEIGHTS = {
     "domain_type": 0.25,
-    "claim_support": 0.35,
+    "topic_relevance": 0.35,
     "age": 0.15,
     "credibility": 0.15,
     "accessibility": 0.10,
@@ -41,11 +41,9 @@ class SourceEvaluator:
     async def evaluate(
         self,
         url: str,
-        claim: str,
-        context: str = "",
+        article_summary: ArticleSummary,
     ) -> SourceEvaluation:
-        # Check LLM evaluation cache before fetching
-        eval_key = cache_key("source_evaluator", url, claim[:100])
+        eval_key = cache_key("source_evaluator_v2", url, article_summary.topic[:80])
         if eval_key in cache:
             return SourceEvaluation.model_validate(cache[eval_key])
 
@@ -71,7 +69,7 @@ class SourceEvaluator:
                 domain_type="other",
                 scores={k: 0.0 for k in SOURCE_WEIGHTS},
                 overall_score=0.0,
-                claim_support_summary="Source is inaccessible and has no archive copy.",
+                topic_coverage_summary="Source is inaccessible and has no archive copy.",
                 recommendation="REJECT",
             )
             cache.set(eval_key, result.model_dump(), expire=7 * 24 * 3600)
@@ -80,8 +78,8 @@ class SourceEvaluator:
         prompt = self.prompt_template.format(
             url=url,
             status=status,
-            claim=claim,
-            context=context,
+            topic=article_summary.topic,
+            scope=article_summary.scope,
             page_text=page_text[:6000],
         )
 
@@ -94,7 +92,6 @@ class SourceEvaluator:
         data = json.loads(response.choices[0].message.content)
         scores = data.get("scores", {})
 
-        # Fill any missing scores with 0
         for dim in SOURCE_WEIGHTS:
             if dim not in scores:
                 scores[dim] = 0.0
@@ -110,9 +107,9 @@ class SourceEvaluator:
             author=data.get("author"),
             publication=data.get("publication"),
             publication_date=data.get("publication_date"),
-            claim_support_summary=data.get("claim_support_summary", ""),
+            topic_coverage_summary=data.get("topic_coverage_summary", ""),
             recommendation=_recommendation(overall),
-            further_claims=data.get("further_claims", []),
+            claims=data.get("claims", []),
         )
 
         cache.set(eval_key, result.model_dump(), expire=7 * 24 * 3600)

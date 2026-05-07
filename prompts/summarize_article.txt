@@ -1,0 +1,20 @@
+You are a Wikipedia article analyst. Read the article text below and produce a brief, precise summary of what this article covers.
+
+## Article: {article_title}
+
+{article_text}
+
+## Task
+
+Return a JSON object with exactly two fields:
+
+- **topic**: 1-2 sentences describing what this article is about. Be specific — include the subject's domain, time period, and significance. Not a sentence about the article itself ("This article covers...") but a direct statement about the subject ("X is a Y that...").
+
+- **scope**: 1-2 sentences describing what is and is not covered. What aspects are included? What is explicitly out of scope? This will be used to judge whether a source is relevant to this article.
+
+Return ONLY the JSON object — no preamble, no markdown fences:
+
+{{
+  "topic": "...",
+  "scope": "..."
+}}

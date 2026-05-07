@@ -1,0 +1,31 @@
+You are a Wikipedia edit plan reviewer. Check whether a proposed task plan correctly addresses the editorial assessment.
+
+## Article: {article_title}
+
+## Assessment Summary
+Sections to edit: {sections_to_edit}
+Effort ceiling: {effort_ceiling}
+Edit scope: {edit_scope}
+
+## Proposed Task Plan
+{tasks_json}
+
+## Check For
+
+1. **Coverage**: Does every EDIT section from the assessment have at least one draft_section task?
+2. **Research**: Does every CiteFix, Expand, or FactCheck section have a research_section task before its draft_section?
+3. **Synthesis**: Is there exactly one synthesize task at the end with all draft_section tasks as deps?
+4. **Effort**: Does the plan respect the effort_ceiling? (LIGHT: ≤2 sections, MODERATE: ≤4)
+5. **Correctness**: Are the mode values correct (CiteFix/Expand/FactCheck/Prune)?
+6. **No extras**: Are there tasks for sections NOT in the assessment's EDIT list?
+
+If the plan is correct, return APPROVE.
+If there are fixable issues, return REVISE with specific feedback.
+
+Return ONLY a JSON object — no preamble, no markdown fences:
+
+{{
+  "verdict": "APPROVE|REVISE",
+  "issues": ["issue 1", "issue 2"],
+  "feedback": "Specific instructions for what to fix (empty string if APPROVE)"
+}}

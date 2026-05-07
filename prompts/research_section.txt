@@ -1,0 +1,28 @@
+You are a Wikipedia research assistant. Given search results for a Wikipedia article, select the most promising URLs to actually fetch and evaluate as sources.
+
+## Article: {article_title}
+
+Topic: {article_topic}
+Scope: {article_scope}
+
+## Section: {section_name}
+
+## Uncited claim needing sources:
+"{claim_text}"
+
+## Search Results (title + snippet only — not yet fetched)
+
+{search_results}
+
+## Task
+
+From the search results above, select the top {max_select} URLs most likely to contain:
+1. Reliable, citable information about this specific claim
+2. Content from authoritative sources (academic, government, established news)
+3. Accessible content (not likely to be behind a full paywall)
+
+Exclude: Wikipedia, Wikimedia, Fandom, social media, pure SEO content.
+
+Return ONLY a JSON array of URLs to fetch — no preamble, no markdown fences:
+
+["url1", "url2", "url3"]

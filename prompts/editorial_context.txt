@@ -14,9 +14,19 @@ Analyze the talk page and return a JSON object with the following fields:
 
 - **editor_imposed_norms**: Explicit standards that editors have established for this article beyond general Wikipedia policy — for example, "this article only uses peer-reviewed sources", "primary sources are not used here", or "dates follow ISO format". Return as a list of plain-English strings. If none, return an empty array.
 
+- **policies_and_restrictions**: Special Wikipedia policies or restrictions that apply to this article, such as semi-protection, BLP, ARBCOM restrictions, or topic bans. Return as a list of plain-English strings. If none, return an empty array.
+
 - **wikiproject_affiliations**: Names of WikiProjects mentioned in templates or discussion (e.g., "WikiProject Medicine", "WikiProject United States"). Return as a list of project name strings. If none, return an empty array.
 
-- **risk_narrative**: A 2–3 sentence summary of the editorial environment — its overall stability, notable conflicts, and any flags for editors to be aware of. If the talk page is empty or minimal, state that and note the article appears uncontested.
+- **active_topics**: Sections or topics that editors have been actively working on recently. Return as a list of section/topic name strings. If none, return an empty array.
+
+- **caution_level**: Overall caution level for making edits to this article:
+  - "CRITICAL" — active edit war, ARBCOM, or serious policy violations in progress
+  - "HIGH" — active disputes, flip-flopped sections, or dominant editor with strong ownership
+  - "MODERATE" — some disputes or norms, but generally stable
+  - "LOW" — stable article with no significant editorial tensions
+
+- **environment_narrative**: A 2–3 sentence summary of the editorial environment — its overall stability, notable conflicts, and any flags for editors to be aware of. If the talk page is empty or minimal, state that and note the article appears uncontested.
 
 ## Output Format
 
@@ -26,6 +36,9 @@ Return ONLY a JSON object with this exact schema — no preamble, no markdown fe
   "active_disputes": [{{"topic": "...", "editors": ["..."], "status": "..."}}],
   "resolved_disputes": [{{"topic": "...", "consensus": "..."}}],
   "editor_imposed_norms": ["..."],
+  "policies_and_restrictions": ["..."],
   "wikiproject_affiliations": ["..."],
-  "risk_narrative": "2-3 sentence summary of the editorial environment."
+  "active_topics": ["..."],
+  "caution_level": "LOW|MODERATE|HIGH|CRITICAL",
+  "environment_narrative": "2-3 sentence summary of the editorial environment."
 }}
