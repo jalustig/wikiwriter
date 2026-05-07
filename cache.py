@@ -1,5 +1,5 @@
 # ABOUTME: Persistent disk cache for all expensive external operations.
-# ABOUTME: Cache key is a deterministic SHA-256 hash of inputs. Use @cached only on standalone async functions.
+# ABOUTME: SHA-256 cache key. Use @cached on standalone async functions only — not instance methods.
 
 import diskcache
 import hashlib
@@ -11,6 +11,16 @@ from dotenv import load_dotenv
 load_dotenv()
 CACHE_DIR = os.getenv("CACHE_DIR", ".wikiwriter_cache")
 cache = diskcache.Cache(CACHE_DIR)
+
+_stats: dict[str, int] = {"hits": 0, "misses": 0}
+
+
+def get_cache_stats() -> dict[str, int]:
+    return dict(_stats)
+
+
+def reset_cache_stats() -> None:
+    _stats["hits"] = _stats["misses"] = 0
 
 
 def cache_key(*args, **kwargs) -> str:
@@ -30,7 +40,9 @@ def cached(namespace: str, ttl: int | None = None):
         async def wrapper(*args, **kwargs):
             key = f"{namespace}:{cache_key(*args, **kwargs)}"
             if key in cache:
+                _stats["hits"] += 1
                 return cache[key]
+            _stats["misses"] += 1
             result = await fn(*args, **kwargs)
             if ttl is not None:
                 cache.set(key, result, expire=ttl)

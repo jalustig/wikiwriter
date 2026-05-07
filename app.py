@@ -1,5 +1,5 @@
-# ABOUTME: Streamlit app — live progress and edit proposal review UI.
-# ABOUTME: Streams events from the orchestrator in real time; renders results incrementally.
+# ABOUTME: Streamlit app — live per-stage progress with inline thinking, then edit proposal review.
+# ABOUTME: Each stage runs inside st.status(); collapses automatically when done.
 
 import asyncio
 import difflib
@@ -8,44 +8,46 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from models import (
-    ProgressEvent, WikiArticle, ContentGrade, EditorialRiskProfile,
+    WikiArticle, ContentGrade, EditorialRiskProfile,
     ImprovementPlan, ClaimMap, CritiqueResult, EditProposal,
 )
 from orchestrator import WikiWriterOrchestrator
 
 STATUS_COLORS = {
-    "editing":  "#2196F3",   # blue
-    "excluded": "#F44336",   # red
-    "ok":       "#4CAF50",   # green
+    "editing":  "#2196F3",
+    "excluded": "#F44336",
+    "ok":       "#4CAF50",
 }
 
 MODE_SHORT = {
-    "Citation Repair":     "Cite Fix",
-    "Claim Attribution":   "Cite Add",
-    "Section Expansion":   "Expand",
-    "Section Rewrite":     "Rewrite",
+    "Citation Repair":          "Cite Fix",
+    "Claim Attribution":        "Cite Add",
+    "Section Expansion":        "Expand",
+    "Section Rewrite":          "Rewrite",
     "Contradiction Integration": "Contradict",
-    "Synthesis Pass":      "Synthesis",
+    "Synthesis Pass":           "Synthesis",
 }
 
-STAGE_LABELS = {
-    "FETCH":    ("🌐", "Reading article"),
-    "INTAKE":   ("📊", "Assessing quality"),
-    "PLAN":     ("🗺️",  "Planning edits"),
-    "CLAIMS":   ("🔎", "Tagging claims"),
-    "SOURCES":  ("🔍", "Evaluating sources"),
-    "DRAFT":    ("✏️",  "Writing drafts"),
-    "CRITIQUE": ("🔬", "Reviewing draft"),
-    "GRADE":    ("📈", "Scoring output"),
+# (icon, running label, done label template)
+STAGE_META = {
+    "FETCH":    ("🌐", "Reading article…",           "Read article"),
+    "INTAKE":   ("📊", "Assessing quality…",          "Quality assessed"),
+    "PLAN":     ("🗺️",  "Planning edits…",             "Edit plan ready"),
+    "CLAIMS":   ("🔎", "Tagging claims…",             "Claims tagged"),
+    "SOURCES":  ("🔍", "Evaluating sources…",         "Sources evaluated"),
+    "DRAFT":    ("✏️",  "Writing drafts…",             "Drafts written"),
+    "CRITIQUE": ("🔬", "Reviewing draft…",            "Draft reviewed"),
+    "GRADE":    ("📈", "Scoring output…",             "Output scored"),
 }
 
-RISK_COLORS = {
-    "LOW": "green",
-    "MODERATE": "orange",
-    "HIGH": "red",
-    "CRITICAL": "red",
+RISK_COLORS = {"LOW": "green", "MODERATE": "orange", "HIGH": "red", "CRITICAL": "red"}
+VERDICT_COLORS = {"PASS": "green", "REVISE": "orange", "DISCARD": "red"}
+CLAIM_STATUS_ICONS = {
+    "cited": "✅", "undercited": "⚠️", "uncited": "❌", "consensus-uncited": "ℹ️",
 }
 
+
+# ── Panel renderers ────────────────────────────────────────────────────────────
 
 def render_risk_panel(risk: EditorialRiskProfile) -> None:
     st.subheader("Editorial Risk")
@@ -56,45 +58,34 @@ def render_risk_panel(risk: EditorialRiskProfile) -> None:
         unsafe_allow_html=True,
     )
     st.write("")
-
     col1, col2, col3 = st.columns(3)
     col1.metric("Revert Rate (12mo)", f"{risk.revert_rate_12mo:.1%}")
     col2.metric("Edit Velocity", risk.edit_velocity)
     col3.metric("Dominant Editor", risk.dominant_editor or "None")
-
     if risk.flip_flopped_sections:
         st.write("**Flip-flopped sections:**", ", ".join(risk.flip_flopped_sections))
-
     if risk.editor_imposed_norms:
         st.write("**Editor-imposed norms:**")
         for norm in risk.editor_imposed_norms:
             st.write(f"- {norm}")
-
     st.caption(risk.risk_narrative)
 
 
 def render_grade_panel(grade: ContentGrade) -> None:
     st.subheader("Article Quality")
     st.metric("Grade", f"{grade.letter_grade} ({grade.overall_score:.1f}/10)")
-
-    rows = [
-        {"Dimension": dim, "Score": f"{score:.1f}"}
-        for dim, score in grade.dimension_scores.items()
-    ]
+    rows = [{"Dimension": dim, "Score": f"{score:.1f}"} for dim, score in grade.dimension_scores.items()]
     st.table(rows)
     st.caption(grade.narrative)
 
 
 def render_plan_chart(
-    article: WikiArticle,
-    content_grade: ContentGrade,
-    plan: ImprovementPlan,
-    risk: EditorialRiskProfile,
+    article: WikiArticle, content_grade: ContentGrade,
+    plan: ImprovementPlan, risk: EditorialRiskProfile,
 ) -> None:
     editing_names = {s.name for s in plan.sections_to_edit}
     excluded_names = set(plan.sections_excluded)
     flip_names = set(risk.flip_flopped_sections)
-
     rows = []
     for name in article.sections:
         score = content_grade.section_grades.get(name, 5.0)
@@ -103,12 +94,8 @@ def render_plan_chart(
             label = "⛔ flip-flop" if name in flip_names else "⛔ excluded"
         elif name in editing_names:
             status = "editing"
-            section_plan = next((s for s in plan.sections_to_edit if s.name == name), None)
-            if section_plan:
-                short_modes = " + ".join(MODE_SHORT.get(m, m) for m in section_plan.modes)
-                label = f"✏️ {short_modes}"
-            else:
-                label = "✏️ editing"
+            sp = next((s for s in plan.sections_to_edit if s.name == name), None)
+            label = f"✏️ {' + '.join(MODE_SHORT.get(m, m) for m in sp.modes)}" if sp else "✏️ editing"
         else:
             status = "ok"
             label = "✓ no changes"
@@ -129,7 +116,6 @@ def render_plan_chart(
             textposition="inside",
             hovertemplate="%{y}: %{x:.1f}/10<br>%{text}<extra></extra>",
         ))
-
     fig.update_layout(
         barmode="overlay",
         xaxis=dict(title="Section quality (0–10)", range=[0, 10]),
@@ -148,38 +134,26 @@ def render_diff_view(section_drafts: list[dict]) -> None:
     if not section_drafts:
         st.write("No drafts available.")
         return
-
     for draft in section_drafts:
         name = draft["section_name"]
-        orig = draft["original_text"]
-        revised = draft["revised_text"]
+        orig, revised = draft["original_text"], draft["revised_text"]
         changes = draft.get("changes_made", [])
-
         with st.expander(f"**{name}**" + (f" — {changes[0]}" if changes else ""), expanded=False):
             if changes:
                 st.write("**Changes:**")
                 for c in changes:
                     st.write(f"- {c}")
-
-            orig_lines = orig.splitlines(keepends=True)
-            rev_lines = revised.splitlines(keepends=True)
             diff = list(difflib.unified_diff(
-                orig_lines, rev_lines, fromfile="original", tofile="revised", n=3
+                orig.splitlines(keepends=True), revised.splitlines(keepends=True),
+                fromfile="original", tofile="revised", n=3,
             ))
-            if diff:
-                st.code("".join(diff), language="diff")
-            else:
-                st.write("_(no changes)_")
-
+            st.code("".join(diff) if diff else "(no changes)", language="diff")
             cites_added = draft.get("citations_added", [])
             cites_removed = draft.get("citations_removed", [])
             if cites_added:
                 st.write("**Citations added:**", ", ".join(cites_added))
             if cites_removed:
                 st.write("**Citations removed:**", ", ".join(cites_removed))
-
-
-VERDICT_COLORS = {"PASS": "green", "REVISE": "orange", "DISCARD": "red"}
 
 
 def render_critique_panel(critique: CritiqueResult) -> None:
@@ -200,29 +174,15 @@ def render_critique_panel(critique: CritiqueResult) -> None:
 
 def render_proposal_panel(proposal: EditProposal) -> None:
     st.subheader("Edit Proposal")
-
     col1, col2, col3 = st.columns(3)
-    col1.metric(
-        "Input Grade",
-        f"{proposal.input_grade.letter_grade}",
-        f"{proposal.input_grade.overall_score:.1f}/10",
-    )
-    col2.metric(
-        "Output Grade",
-        f"{proposal.output_grade.letter_grade}",
-        f"{proposal.output_grade.overall_score:.1f}/10",
-    )
-    delta = proposal.quality_delta
-    col3.metric("Quality Delta", f"{delta:+.1f}", delta_color="normal")
-
+    col1.metric("Input Grade", proposal.input_grade.letter_grade,
+                f"{proposal.input_grade.overall_score:.1f}/10")
+    col2.metric("Output Grade", proposal.output_grade.letter_grade,
+                f"{proposal.output_grade.overall_score:.1f}/10")
+    col3.metric("Quality Delta", f"{proposal.quality_delta:+.1f}", delta_color="normal")
     render_critique_panel(proposal.critique)
-
     with st.expander("Article Diff", expanded=False):
-        if proposal.full_diff:
-            st.code(proposal.full_diff, language="diff")
-        else:
-            st.write("_(no diff available)_")
-
+        st.code(proposal.full_diff or "(no diff available)", language="diff")
     st.divider()
     st.subheader("Submit to Wikipedia")
     st.text_area(
@@ -237,40 +197,78 @@ def render_proposal_panel(proposal: EditProposal) -> None:
         st.warning("Edit rejected.")
 
 
-CLAIM_STATUS_ICONS = {
-    "cited": "✅",
-    "undercited": "⚠️",
-    "uncited": "❌",
-    "consensus-uncited": "ℹ️",
-}
-
-
 def render_claim_map(claim_map: ClaimMap) -> None:
     st.subheader("Claim Map")
-    counts = {}
+    counts: dict[str, int] = {}
     for c in claim_map.claims:
         counts[c.status] = counts.get(c.status, 0) + 1
-
     cols = st.columns(4)
     for i, status in enumerate(["cited", "undercited", "uncited", "consensus-uncited"]):
         icon = CLAIM_STATUS_ICONS[status]
         cols[i].metric(f"{icon} {status.replace('-', ' ').title()}", counts.get(status, 0))
-
     with st.expander("Claims needing sources", expanded=True):
         needs_source = [c for c in claim_map.claims if c.status in ("uncited", "undercited")]
         if not needs_source:
             st.write("All claims are cited.")
         else:
             for claim in needs_source:
-                icon = CLAIM_STATUS_ICONS[claim.status]
-                st.write(f"{icon} {claim.text}")
-
+                st.write(f"{CLAIM_STATUS_ICONS[claim.status]} {claim.text}")
     with st.expander("All claims"):
         for claim in claim_map.claims:
             icon = CLAIM_STATUS_ICONS.get(claim.status, "?")
             cid = f" _(ref {claim.citation_id})_" if claim.citation_id else ""
             st.write(f"{icon} {claim.text}{cid}")
 
+
+# ── Live streaming runner ──────────────────────────────────────────────────────
+
+def run_and_render(url: str) -> dict:
+    """
+    Stream events from the orchestrator, rendering each stage in a st.status() widget.
+    Thinking events appear as italic text inside the status. Stages collapse when done.
+    Returns a dict of accumulated event data for the results panels below.
+    """
+    stage_widgets: dict[str, object] = {}   # stage_key -> StatusContainer
+    stage_done_labels: dict[str, str] = {}  # stage_key -> final label for collapse
+    accumulated: dict = {}
+
+    async def stream():
+        async for event in WikiWriterOrchestrator().run(url):
+            stage = event.stage
+            icon, running_label, done_label = STAGE_META.get(stage, ("•", stage, stage))
+
+            # Create the status widget on first event for this stage
+            if stage not in stage_widgets:
+                stage_widgets[stage] = st.status(f"{icon} {running_label}", expanded=True)
+
+            widget = stage_widgets[stage]
+
+            if event.status == "thinking":
+                widget.markdown(f"*{event.message}*")
+            elif event.status == "running":
+                # For progress counters (contains "/"), update the widget label
+                if "/" in event.message:
+                    widget.update(label=f"{icon} {event.message}")
+                else:
+                    widget.markdown(event.message)
+            elif event.status == "done":
+                label = f"{icon} {done_label} — {event.message}"
+                stage_done_labels[stage] = label
+                widget.update(label=label, state="complete", expanded=False)
+                if event.data:
+                    accumulated.update(event.data)
+            elif event.status == "error":
+                widget.update(
+                    label=f"{icon} {event.message}",
+                    state="error",
+                    expanded=True,
+                )
+
+    asyncio.run(stream())
+    return accumulated
+
+
+# ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
     st.set_page_config(page_title="WikiWriter", layout="wide")
@@ -286,51 +284,21 @@ def main():
     if not analyse or not url:
         return
 
-    # Set up one live placeholder per stage; updated as events stream in
-    st.subheader("What I'm doing")
-    progress_container = st.container()
-    stage_placeholders = {stage: progress_container.empty() for stage in STAGE_LABELS}
+    accumulated = run_and_render(url)
 
-    # Collected as events arrive
-    collected: dict = {"events": [], "final_data": {}}
-
-    async def stream():
-        async for event in WikiWriterOrchestrator().run(url):
-            collected["events"].append(event)
-            if event.data:
-                collected["final_data"].update(event.data)
-            icon, label = STAGE_LABELS.get(event.stage, ("•", event.stage))
-            ph = stage_placeholders.get(event.stage)
-            if ph is None:
-                continue
-            if event.status == "running":
-                ph.info(f"{icon} **{label}** — {event.message}")
-            elif event.status == "done":
-                ph.success(f"{icon} **{label}** — {event.message}")
-            elif event.status == "error":
-                ph.error(f"{icon} **{label}** — {event.message}")
-
-    asyncio.run(stream())
-
-    events: list[ProgressEvent] = collected["events"]
-    final_data: dict = collected["final_data"]
-
-    if not events:
-        st.error("No events received — check that the URL is a valid Wikipedia article.")
+    if not accumulated:
+        st.error("Agent did not produce results — check that the URL is a valid Wikipedia article.")
         return
 
-    # Extract structured results from accumulated events
-    intake_event = next((e for e in reversed(events) if e.stage == "INTAKE" and e.status == "done"), None)
-    plan_event = next((e for e in reversed(events) if e.stage == "PLAN" and e.status == "done"), None)
-
-    if not intake_event or not plan_event:
-        st.error("Agent did not complete the planning phase.")
+    # Build structured results from accumulated event data
+    if "grade" not in accumulated or "risk" not in accumulated or "plan" not in accumulated:
+        st.error("Agent did not complete planning.")
         return
 
-    risk = EditorialRiskProfile.model_validate(intake_event.data["risk"])
-    grade = ContentGrade.model_validate(intake_event.data["grade"])
-    plan = ImprovementPlan.model_validate(plan_event.data["plan"])
-    article = WikiArticle.model_validate(plan_event.data["article"])
+    risk = EditorialRiskProfile.model_validate(accumulated["risk"])
+    grade = ContentGrade.model_validate(accumulated["grade"])
+    plan = ImprovementPlan.model_validate(accumulated["plan"])
+    article = WikiArticle.model_validate(accumulated["article"])
 
     st.divider()
     render_risk_panel(risk)
@@ -342,23 +310,20 @@ def main():
     st.subheader("Improvement Plan")
     render_plan_chart(article, grade, plan, risk)
 
-    claims_event = next((e for e in reversed(events) if e.stage == "CLAIMS" and e.status == "done"), None)
-    if claims_event and claims_event.data:
+    if "claim_map" in accumulated:
         st.divider()
-        claim_map = ClaimMap.model_validate(claims_event.data["claim_map"])
-        render_claim_map(claim_map)
+        render_claim_map(ClaimMap.model_validate(accumulated["claim_map"]))
 
-    draft_event = next((e for e in reversed(events) if e.stage == "DRAFT" and e.status == "done"), None)
-    if draft_event and draft_event.data:
+    if "section_drafts" in accumulated:
         st.divider()
-        render_diff_view(draft_event.data.get("section_drafts", []))
+        render_diff_view(accumulated["section_drafts"])
 
-    if "audit" in final_data and "new_sources" in final_data:
+    if "audit" in accumulated and "new_sources" in accumulated:
         st.divider()
         st.subheader("Sources")
         tab1, tab2 = st.tabs(["Existing Citations", "New Sources"])
         with tab1:
-            for s in final_data["audit"]:
+            for s in accumulated["audit"]:
                 icon = "✅" if s["recommendation"] == "USE" else "⚠️" if s["recommendation"] == "WEAK" else "❌"
                 status_note = f" ({s['status']})" if s["status"] != "LIVE" else ""
                 st.write(
@@ -368,26 +333,17 @@ def main():
                 if s.get("claim_support_summary"):
                     st.caption(f"   {s['claim_support_summary']}")
         with tab2:
-            for s in final_data["new_sources"]:
+            for s in accumulated["new_sources"]:
                 st.write(f"➕ [{s['overall_score']:.1f}] `{s['domain_type']}` — {s['url'][:80]}")
                 if s.get("claim_support_summary"):
                     st.caption(f"   {s['claim_support_summary']}")
 
-    grade_event = next(
-        (e for e in reversed(events) if e.stage == "GRADE" and e.status == "done" and e.data), None
-    )
-    if grade_event and grade_event.data and "proposal" in grade_event.data:
-        proposal = EditProposal.model_validate(grade_event.data["proposal"])
+    if "proposal" in accumulated:
         st.divider()
-        render_proposal_panel(proposal)
-    elif next((e for e in events if e.stage == "CRITIQUE" and e.status == "done"), None):
-        critique_event = next(
-            (e for e in reversed(events) if e.stage == "CRITIQUE" and e.status == "done"), None
-        )
-        if critique_event and critique_event.data:
-            critique = CritiqueResult.model_validate(critique_event.data["critique"])
-            st.divider()
-            render_critique_panel(critique)
+        render_proposal_panel(EditProposal.model_validate(accumulated["proposal"]))
+    elif "critique" in accumulated:
+        st.divider()
+        render_critique_panel(CritiqueResult.model_validate(accumulated["critique"]))
 
 
 if __name__ == "__main__":
