@@ -1,6 +1,8 @@
 You are a Wikipedia quality evaluator. Your task is to score the article "{article_title}" on 7 dimensions and return a structured JSON assessment.
 
-## Article Content
+## Article Wikitext
+
+The following is the raw wikitext of the article. Inline citations appear as `<ref>` tags and `{{cite}}` templates — use their presence or absence to assess citation_coverage and citation_quality.
 
 {sections_text}
 
