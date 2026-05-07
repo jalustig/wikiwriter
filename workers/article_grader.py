@@ -10,6 +10,16 @@ from dotenv import load_dotenv
 from cache import cache, cache_key
 from models import WikiArticle, ContentGrade
 
+DIMENSION_WEIGHTS = {
+    "citation_coverage": 0.20,
+    "citation_quality": 0.15,
+    "npov": 0.20,
+    "prose_quality": 0.15,
+    "structural_completeness": 0.15,
+    "freshness": 0.10,
+    "lead_quality": 0.05,
+}
+
 
 def _letter_grade(score: float) -> str:
     if score >= 8.5:
@@ -34,7 +44,11 @@ class ArticleGrader:
     async def run(self, article: WikiArticle) -> ContentGrade:
         key = cache_key("article_grader", article.url, article.wikitext[:500])
         if key in cache:
-            return ContentGrade.model_validate(cache[key])
+            cached = cache[key]
+            dim = cached.get("dimension_scores", {})
+            cached["overall_score"] = sum(dim[d] * w for d, w in DIMENSION_WEIGHTS.items() if d in dim)
+            cached["letter_grade"] = _letter_grade(cached["overall_score"])
+            return ContentGrade.model_validate(cached)
 
         sections_text = "\n\n".join(
             f"== {name} ==\n{text[:1000]}"
@@ -53,8 +67,15 @@ class ArticleGrader:
 
         data = json.loads(response.choices[0].message.content)
 
-        # Enforce letter grade mapping regardless of what the model returns
-        overall = float(data["overall_score"])
+        dimension_scores = data.get("dimension_scores", {})
+        for key in DIMENSION_WEIGHTS:
+            if key not in dimension_scores:
+                print(f"Warning: missing dimension {key}, defaulting to 5.0")
+                dimension_scores[key] = 5.0
+        data["dimension_scores"] = dimension_scores
+
+        overall = sum(dimension_scores[d] * w for d, w in DIMENSION_WEIGHTS.items())
+        data["overall_score"] = overall
         data["letter_grade"] = _letter_grade(overall)
 
         grade = ContentGrade.model_validate(data)

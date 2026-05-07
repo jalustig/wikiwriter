@@ -43,25 +43,7 @@ Return ONLY a JSON object with this exact schema — no preamble, no markdown fe
   "section_grades": {{
     "SectionName": 0.0
   }},
-  "overall_score": 0.0,
-  "letter_grade": "C",
   "narrative": "2–3 sentence summary of key quality findings and the most important areas for improvement."
 }}
-
-The `overall_score` must be the weighted average of dimension scores using these weights:
-- citation_coverage × 0.20
-- citation_quality × 0.15
-- npov × 0.20
-- prose_quality × 0.15
-- structural_completeness × 0.15
-- freshness × 0.10
-- lead_quality × 0.05
-
-The `letter_grade` must follow this mapping:
-- 8.5–10.0 → "A"
-- 7.0–8.49 → "B"
-- 5.5–6.99 → "C"
-- 4.0–5.49 → "D"
-- below 4.0 → "F"
 
 The `narrative` must be exactly 2–3 sentences summarising the article's key strengths and weaknesses.
