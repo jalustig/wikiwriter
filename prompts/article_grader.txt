@@ -1,0 +1,67 @@
+You are a Wikipedia quality evaluator. Your task is to score the article "{article_title}" on 7 dimensions and return a structured JSON assessment.
+
+## Article Content
+
+{sections_text}
+
+## Scoring Dimensions
+
+Score each dimension from 0 to 10, using 0.5 granularity (e.g., 6.0, 7.5, 8.0). Higher is better.
+
+1. **citation_coverage** (0–10): What proportion of factual claims are supported by inline citations? 10 = nearly all claims cited; 0 = no citations at all.
+
+2. **citation_quality** (0–10): Are citations from reliable, authoritative sources? Are they current (not stale)? Do they actually support the claims they are attached to? 10 = excellent sourcing throughout; 0 = all citations are unreliable, dead, or irrelevant.
+
+3. **npov** (0–10): Is the article free of promotional language, bias, weasel words, and value judgments? 10 = scrupulously neutral; 0 = heavily biased or promotional.
+
+4. **prose_quality** (0–10): Is the writing clear, concise, and encyclopedic in tone? Penalize jargon, wordiness, awkward phrasing, and non-encyclopedic register. 10 = publication-ready prose; 0 = barely readable.
+
+5. **structural_completeness** (0–10): Does the article cover the topic appropriately with well-developed sections? Are important aspects of the subject missing or underdeveloped? 10 = comprehensive and well-organized; 0 = major gaps or stub-level coverage.
+
+6. **freshness** (0–10): Is the content current? Are there outdated facts, stale statistics, or references that have not been updated to reflect recent developments? 10 = fully up to date; 0 = seriously outdated throughout.
+
+7. **lead_quality** (0–10): Does the lead section accurately and concisely summarize the entire article? Does it follow Wikipedia's guideline that the lead should stand alone as a summary? 10 = exemplary lead; 0 = missing, misleading, or fails to summarize the article.
+
+## Per-Section Scoring
+
+Also score each section individually on overall quality (clarity, completeness, sourcing), using the same 0–10 scale with 0.5 granularity.
+
+## Output Format
+
+Return ONLY a JSON object with this exact schema — no preamble, no markdown fences:
+
+{{
+  "dimension_scores": {{
+    "citation_coverage": 0.0,
+    "citation_quality": 0.0,
+    "npov": 0.0,
+    "prose_quality": 0.0,
+    "structural_completeness": 0.0,
+    "freshness": 0.0,
+    "lead_quality": 0.0
+  }},
+  "section_grades": {{
+    "SectionName": 0.0
+  }},
+  "overall_score": 0.0,
+  "letter_grade": "C",
+  "narrative": "2–3 sentence summary of key quality findings and the most important areas for improvement."
+}}
+
+The `overall_score` must be the weighted average of dimension scores using these weights:
+- citation_coverage × 0.20
+- citation_quality × 0.15
+- npov × 0.20
+- prose_quality × 0.15
+- structural_completeness × 0.15
+- freshness × 0.10
+- lead_quality × 0.05
+
+The `letter_grade` must follow this mapping:
+- 8.5–10.0 → "A"
+- 7.0–8.49 → "B"
+- 5.5–6.99 → "C"
+- 4.0–5.49 → "D"
+- below 4.0 → "F"
+
+The `narrative` must be exactly 2–3 sentences summarising the article's key strengths and weaknesses.
