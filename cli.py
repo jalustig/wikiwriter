@@ -8,6 +8,7 @@ import re
 import sys
 
 from constants import STAGE_META
+from dag import dag_layers
 from models import ContentGrade, EditorialEnvironment, ArticleAssessment
 from orchestrator import WikiWriterOrchestrator
 
@@ -66,34 +67,13 @@ def _print_assessment(assessment: ArticleAssessment) -> None:
             print(f"    ✓  {s.name:<40} SKIP — {s.rationale}")
 
 
-def _dag_layers(dag: dict) -> list[list[str]]:
-    """Group DAG node IDs into topological depth layers."""
-    depths: dict[str, int] = {}
-
-    def depth(nid: str) -> int:
-        if nid in depths:
-            return depths[nid]
-        deps = dag[nid].get("deps", [])
-        depths[nid] = (1 + max(depth(d) for d in deps)) if deps else 0
-        return depths[nid]
-
-    for nid in dag:
-        depth(nid)
-
-    max_d = max(depths.values(), default=0)
-    layers: list[list[str]] = [[] for _ in range(max_d + 1)]
-    for nid, d in sorted(depths.items()):
-        layers[d].append(nid)
-    return layers
-
-
 def _print_dag(dag: dict, narrative: str) -> None:
     _sep("Task DAG")
     if not dag:
         print("  (empty)")
         return
 
-    layers = _dag_layers(dag)
+    layers = dag_layers(dag)
     inner = _W - 4  # usable width inside the box borders
 
     for i, layer in enumerate(layers):

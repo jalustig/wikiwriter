@@ -1,37 +1,26 @@
 # ABOUTME: Streamlit app — live per-stage progress with inline thinking and progressive panel rendering.
-# ABOUTME: Results (risk, grade, plan, diff) appear as soon as each stage completes.
+# ABOUTME: Results (environment, grade, assessment, DAG, diffs, critique) appear as each stage completes.
 
 import asyncio
 import difflib
+import io
 import re
 
-import plotly.graph_objects as go
 import streamlit as st
+from PIL import Image, ImageDraw, ImageFont
 
 from constants import STAGE_META
+from dag import dag_layers
 from models import (
-    WikiArticle, ContentGrade, EditorialRiskProfile,
-    ImprovementPlan, ClaimMap, CritiqueResult, EditProposal,
+    ContentGrade, EditorialEnvironment, ArticleAssessment,
+    CritiqueResult, EditProposal,
 )
 from orchestrator import WikiWriterOrchestrator
 
-STATUS_COLORS = {
-    "editing":  "#2196F3",
-    "excluded": "#F44336",
-    "ok":       "#4CAF50",
+CAUTION_COLORS = {"LOW": "green", "MODERATE": "orange", "HIGH": "red", "CRITICAL": "red"}
+VERDICT_COLORS = {
+    "PASS": "#16A34A", "REVISE": "#D97706", "PARTIAL_ACCEPT": "#2563EB", "DISCARD": "#DC2626",
 }
-
-MODE_SHORT = {
-    "Citation Repair":          "Cite Fix",
-    "Claim Attribution":        "Cite Add",
-    "Section Expansion":        "Expand",
-    "Section Rewrite":          "Rewrite",
-    "Contradiction Integration": "Contradict",
-    "Synthesis Pass":           "Synthesis",
-}
-
-RISK_COLORS = {"LOW": "green", "MODERATE": "orange", "HIGH": "red", "CRITICAL": "red"}
-VERDICT_COLORS = {"PASS": "green", "REVISE": "orange", "DISCARD": "red"}
 CLAIM_ICONS = {"cited": "✅", "undercited": "⚠️", "uncited": "❌", "consensus-uncited": "ℹ️"}
 
 _DIFF_CSS = """
@@ -63,47 +52,129 @@ col.diff_next   { width: 1.5em; }
 </style>
 """
 
+# ── DAG image renderer ─────────────────────────────────────────────────────────
 
-def _split_sentences(text: str) -> list[str]:
-    """Split prose into sentence-level units so diffs are meaningful."""
-    parts = re.split(r"(?<=[.!?])\s+", text.strip())
-    return [p for p in parts if p.strip()]
+_TYPE_COLORS = {
+    "research_section":   ("#DBEAFE", "#3B82F6"),   # blue
+    "draft_section":      ("#DCFCE7", "#16A34A"),   # green
+    "synthesize":         ("#F3E8FF", "#9333EA"),   # purple
+    "draft_full_article": ("#FEF9C3", "#CA8A04"),   # amber
+}
+_DEFAULT_NODE_COLOR = ("#F1F5F9", "#64748B")
 
 
-def _html_diff(original: str, revised: str) -> str:
-    """Return side-by-side HTML diff table at sentence granularity."""
-    orig_lines = _split_sentences(original)
-    rev_lines = _split_sentences(revised)
-    d = difflib.HtmlDiff(wrapcolumn=72)
-    return _DIFF_CSS + d.make_table(
-        orig_lines, rev_lines,
-        fromdesc="Original", todesc="Revised",
-        context=True, numlines=2,
-    )
+def _dag_png(dag: dict) -> bytes:
+    """Render DAG as a PNG image (bytes). Nodes are colour-coded by type, layers flow left→right."""
+    layers = dag_layers(dag)
+
+    NW, NH = 230, 66    # node width / height (px)
+    HG, VG = 72, 14     # horizontal / vertical gap between nodes
+    PAD = 40            # canvas padding
+
+    n_layers = len(layers)
+    max_per_layer = max(len(layer) for layer in layers)
+
+    W = n_layers * NW + (n_layers - 1) * HG + 2 * PAD
+    H = max(160, max_per_layer * NH + (max_per_layer - 1) * VG + 2 * PAD)
+
+    # Compute pixel centres for every node
+    pos: dict[str, tuple[int, int]] = {}
+    for li, layer in enumerate(layers):
+        n = len(layer)
+        col_h = n * NH + (n - 1) * VG
+        y0 = (H - col_h) // 2
+        for i, nid in enumerate(layer):
+            cx = PAD + li * (NW + HG) + NW // 2
+            cy = y0 + i * (NH + VG) + NH // 2
+            pos[nid] = (cx, cy)
+
+    img = Image.new("RGB", (W, H), "#F8FAFC")
+    draw = ImageDraw.Draw(img)
+
+    try:
+        f_label = ImageFont.load_default(size=13)
+        f_small = ImageFont.load_default(size=11)
+        f_id = ImageFont.load_default(size=10)
+    except TypeError:                          # older Pillow fallback
+        f_label = f_small = f_id = ImageFont.load_default()
+
+    # Edges (drawn first so nodes appear on top)
+    for nid, node in dag.items():
+        cx2, cy2 = pos[nid]
+        for dep in node.get("deps", []):
+            cx1, cy1 = pos[dep]
+            x_start = cx1 + NW // 2
+            x_end = cx2 - NW // 2 - 1
+            # Horizontal line from right edge → arrow tip
+            draw.line([(x_start, cy1), (x_end - 4, cy2)], fill="#94A3B8", width=2)
+            # Arrowhead
+            draw.polygon(
+                [(x_end - 9, cy2 - 5), (x_end - 9, cy2 + 5), (x_end, cy2)],
+                fill="#94A3B8",
+            )
+
+    # Nodes
+    for nid, node in dag.items():
+        cx, cy = pos[nid]
+        x0, y0 = cx - NW // 2 + 1, cy - NH // 2 + 1
+        x1, y1 = cx + NW // 2 - 1, cy + NH // 2 - 1
+
+        fill, border = _TYPE_COLORS.get(node.get("type", ""), _DEFAULT_NODE_COLOR)
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=8, fill=fill, outline=border, width=2)
+
+        # Small ID badge in top-left corner
+        draw.text((x0 + 7, y0 + 5), f"[{nid}]", fill=border, font=f_id)
+
+        # Type name centred vertically (slight upward shift when params present)
+        params = node.get("params", {})
+        type_label = node.get("type", "").replace("_", " ")
+        has_params = bool(params)
+        draw.text(
+            (cx, cy - 7 if has_params else cy),
+            type_label,
+            fill="#1E293B",
+            anchor="mm",
+            font=f_label,
+        )
+
+        # Params line beneath the type label
+        if has_params:
+            pstr = "  ".join(str(v) for v in params.values())
+            if len(pstr) > 30:
+                pstr = pstr[:28] + "…"
+            draw.text((cx, cy + 10), pstr, fill="#475569", anchor="mm", font=f_small)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 # ── Panel renderers ────────────────────────────────────────────────────────────
 
-def render_risk_panel(risk: EditorialRiskProfile) -> None:
-    st.subheader("Editorial Risk")
-    color = RISK_COLORS.get(risk.risk_tier, "gray")
+def render_environment_panel(env: EditorialEnvironment) -> None:
+    st.subheader("Editorial Environment")
+    color = CAUTION_COLORS.get(env.caution_level, "gray")
     st.markdown(
         f"<span style='background:{color};color:white;padding:4px 10px;"
-        f"border-radius:4px;font-weight:bold;'>{risk.risk_tier}</span>",
+        f"border-radius:4px;font-weight:bold;'>{env.caution_level}</span>",
         unsafe_allow_html=True,
     )
     st.write("")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Revert Rate (12mo)", f"{risk.revert_rate_12mo:.1%}")
-    col2.metric("Edit Velocity", risk.edit_velocity)
-    col3.metric("Dominant Editor", risk.dominant_editor or "None")
-    if risk.flip_flopped_sections:
-        st.write("**Flip-flopped sections:**", ", ".join(risk.flip_flopped_sections))
-    if risk.editor_imposed_norms:
+    col1.metric("Revert Rate (12mo)", f"{env.revert_rate_12mo:.1%}")
+    col2.metric("Edit Velocity", env.edit_velocity)
+    col3.metric("Dominant Editor", env.dominant_editor or "None")
+    if env.flip_flopped_sections:
+        st.write("**Flip-flopped sections:**", ", ".join(env.flip_flopped_sections))
+    if env.policies_and_restrictions:
+        st.write("**Policies/restrictions:**")
+        for p in env.policies_and_restrictions:
+            st.write(f"- {p}")
+    if env.editor_imposed_norms:
         st.write("**Editor norms:**")
-        for norm in risk.editor_imposed_norms:
-            st.write(f"- {norm}")
-    st.caption(risk.risk_narrative)
+        for n in env.editor_imposed_norms:
+            st.write(f"- {n}")
+    st.caption(env.environment_narrative)
 
 
 def render_grade_panel(grade: ContentGrade) -> None:
@@ -114,58 +185,49 @@ def render_grade_panel(grade: ContentGrade) -> None:
     st.caption(grade.narrative)
 
 
-def render_plan_chart(
-    article: WikiArticle, content_grade: ContentGrade,
-    plan: ImprovementPlan, risk: EditorialRiskProfile,
-) -> None:
-    editing_names = {s.name for s in plan.sections_to_edit}
-    excluded_names = set(plan.sections_excluded)
-    flip_names = set(risk.flip_flopped_sections)
-    rows = []
-    for name in article.sections:
-        score = content_grade.section_grades.get(name, 5.0)
-        if name in excluded_names or name in flip_names:
-            status = "excluded"
-            label = "⛔ flip-flop" if name in flip_names else "⛔ excluded"
-        elif name in editing_names:
-            status = "editing"
-            sp = next((s for s in plan.sections_to_edit if s.name == name), None)
-            label = f"✏️ {' + '.join(MODE_SHORT.get(m, m) for m in sp.modes)}" if sp else "✏️ editing"
-        else:
-            status = "ok"
-            label = "✓ no changes"
-        rows.append({"name": name, "score": score, "status": status, "label": label})
+def render_assessment_panel(assessment: ArticleAssessment) -> None:
+    st.subheader("Article Assessment")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Importance", assessment.importance.tier)
+    col2.metric("Class", assessment.article_class)
+    col3.metric("Effort", assessment.effort_ceiling)
+    st.caption(assessment.edit_rationale)
+    if assessment.primary_weaknesses:
+        st.write("**Primary weaknesses:**")
+        for w in assessment.primary_weaknesses:
+            st.write(f"- {w}")
+    st.write("**Per-section decisions:**")
+    for s in assessment.sections:
+        icon = "✏️" if s.action == "EDIT" else "✓"
+        tag = f"[{s.edit_type}]" if s.edit_type else ""
+        st.write(f"{icon} **{s.name}** {tag} — {s.rationale}")
 
-    fig = go.Figure()
-    for status, color in STATUS_COLORS.items():
-        subset = [r for r in rows if r["status"] == status]
-        if not subset:
-            continue
-        fig.add_trace(go.Bar(
-            name=status.capitalize(),
-            y=[r["name"] for r in subset],
-            x=[r["score"] for r in subset],
-            orientation="h",
-            marker_color=color,
-            text=[r["label"] for r in subset],
-            textposition="inside",
-            hovertemplate="%{y}: %{x:.1f}/10<br>%{text}<extra></extra>",
-        ))
-    fig.update_layout(
-        barmode="overlay",
-        xaxis=dict(title="Section quality (0–10)", range=[0, 10]),
-        yaxis=dict(autorange="reversed"),
-        height=max(300, len(rows) * 35),
-        margin=dict(l=10, r=10, t=10, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        plot_bgcolor="rgba(0,0,0,0)",
+
+def render_dag_panel(dag: dict, narrative: str) -> None:
+    st.subheader("Task DAG")
+    if not dag:
+        st.write("_(empty plan)_")
+        return
+    png = _dag_png(dag)
+    st.image(png, use_container_width=True)
+    st.caption(narrative)
+
+
+def _split_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    return [p for p in parts if p.strip()]
+
+
+def _html_diff(original: str, revised: str) -> str:
+    d = difflib.HtmlDiff(wrapcolumn=72)
+    return _DIFF_CSS + d.make_table(
+        _split_sentences(original), _split_sentences(revised),
+        fromdesc="Original", todesc="Revised",
+        context=True, numlines=2,
     )
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption(plan.narrative)
 
 
 def render_section_diff(draft: dict) -> None:
-    """Render one section's diff as a side-by-side HTML table."""
     changes = draft.get("changes_made", [])
     header = f"**{draft['section_name']}**" + (f" — {changes[0]}" if changes else "")
     with st.expander(header, expanded=False):
@@ -178,12 +240,12 @@ def render_section_diff(draft: dict) -> None:
             st.write("_(no text changes)_")
         else:
             st.html(_html_diff(orig, revised))
-        cites_added = draft.get("citations_added", [])
-        cites_removed = draft.get("citations_removed", [])
-        if cites_added:
-            st.write("**Citations added:**", ", ".join(cites_added))
-        if cites_removed:
-            st.write("**Citations removed:**", ", ".join(cites_removed))
+        for label, cites in (
+            ("Citations added", draft.get("citations_added", [])),
+            ("Citations removed", draft.get("citations_removed", [])),
+        ):
+            if cites:
+                st.write(f"**{label}:**", ", ".join(cites))
 
 
 def render_diff_view(section_drafts: list[dict]) -> None:
@@ -204,9 +266,25 @@ def render_critique_panel(critique: CritiqueResult) -> None:
         unsafe_allow_html=True,
     )
     st.write("")
-    for dim, result in critique.dimension_results.items():
-        icon = "✅" if result.verdict == "PASS" else "❌"
-        st.write(f"{icon} **{dim.replace('_', ' ').title()}**: {result.notes}")
+
+    if critique.section_results:
+        for sec_name, sec_result in critique.section_results.items():
+            icon = "✅" if sec_result.verdict == "PASS" else "❌"
+            with st.expander(f"{icon} {sec_name}", expanded=sec_result.verdict == "FAIL"):
+                for dim, data in sec_result.dimensions.items():
+                    dim_icon = "✅" if data.verdict == "PASS" else "❌"
+                    st.write(f"{dim_icon} **{dim}**: {data.notes}")
+                if sec_result.suggested_fix:
+                    st.info(f"Suggested fix: {sec_result.suggested_fix}")
+    elif critique.dimension_results:
+        for dim, result in critique.dimension_results.items():
+            icon = "✅" if result.verdict == "PASS" else "❌"
+            st.write(f"{icon} **{dim.replace('_', ' ').title()}**: {result.notes}")
+
+    if critique.revision_instructions:
+        st.write("**Revision instructions:**")
+        for instr in critique.revision_instructions:
+            st.write(f"- {instr}")
     if critique.discard_reason:
         st.error(f"Discard reason: {critique.discard_reason}")
 
@@ -219,14 +297,21 @@ def render_proposal_panel(proposal: EditProposal) -> None:
     col2.metric("Output Grade",
                 proposal.output_grade.letter_grade, f"{proposal.output_grade.overall_score:.1f}/10")
     col3.metric("Quality Delta", f"{proposal.quality_delta:+.1f}", delta_color="normal")
+
     render_critique_panel(proposal.critique)
-    st.divider()
-    st.subheader("Submit to Wikipedia")
-    st.text_area(
-        "Edit summary (copy into Wikipedia's edit summary box)",
-        proposal.disclosure_edit_summary,
-        height=80,
-    )
+
+    if proposal.edit_summary:
+        st.divider()
+        st.subheader("Editorial Summary")
+        st.write(proposal.edit_summary.narrative)
+        st.divider()
+        st.subheader("Submit to Wikipedia")
+        st.text_area(
+            "Edit summary (copy into Wikipedia's edit summary box)",
+            proposal.edit_summary.disclosure_line,
+            height=80,
+        )
+
     col1, col2 = st.columns(2)
     if col1.button("✅ Approve edit", type="primary"):
         st.success("Approved. Copy the edit summary above and apply the diff to Wikipedia manually.")
@@ -234,40 +319,12 @@ def render_proposal_panel(proposal: EditProposal) -> None:
         st.warning("Edit rejected.")
 
 
-def render_claim_map(claim_map: ClaimMap) -> None:
-    st.subheader("Claim Map")
-    counts: dict[str, int] = {}
-    for c in claim_map.claims:
-        counts[c.status] = counts.get(c.status, 0) + 1
-    cols = st.columns(4)
-    for i, status in enumerate(["cited", "undercited", "uncited", "consensus-uncited"]):
-        cols[i].metric(f"{CLAIM_ICONS[status]} {status.replace('-', ' ').title()}", counts.get(status, 0))
-    with st.expander("Claims needing sources", expanded=True):
-        needs_source = [c for c in claim_map.claims if c.status in ("uncited", "undercited")]
-        if not needs_source:
-            st.write("All claims are cited.")
-        else:
-            for claim in needs_source:
-                st.write(f"{CLAIM_ICONS[claim.status]} {claim.text}")
-    with st.expander("All claims"):
-        for claim in claim_map.claims:
-            icon = CLAIM_ICONS.get(claim.status, "?")
-            cid = f" _(ref {claim.citation_id})_" if claim.citation_id else ""
-            st.write(f"{icon} {claim.text}{cid}")
-
-
 # ── Live streaming runner ──────────────────────────────────────────────────────
 
 def run_and_render(url: str) -> None:
-    """
-    Stream events from the orchestrator. Each stage runs in a st.status() widget
-    (thinking events appear as italic text). A completed stage stays expanded until
-    the next stage begins, then collapses — so narration is always readable.
-    Result panels append below the progress section as each stage completes.
-    """
     stage_widgets: dict[str, object] = {}
-    accumulated: dict = {}  # all done-event data accumulated so far
-    prev_stage: list[str] = []  # mutable cell: the last stage that completed
+    accumulated: dict = {}
+    prev_stage: list[str] = []
 
     async def stream():
         async for event in WikiWriterOrchestrator().run(url):
@@ -286,12 +343,11 @@ def run_and_render(url: str) -> None:
                 else:
                     widget.markdown(event.message)
             elif event.status == "done":
-                # Collapse the previous stage now that this one has finished
                 if prev_stage:
                     stage_widgets[prev_stage[0]].update(expanded=False)
                 widget.update(
                     label=f"{icon} {done_label} — {event.message}",
-                    state="complete", expanded=True,  # stays open until the stage after this completes
+                    state="complete", expanded=True,
                 )
                 prev_stage[:] = [stage]
                 if event.data:
@@ -304,57 +360,52 @@ def run_and_render(url: str) -> None:
 
 
 def _render_inline(event, accumulated: dict) -> None:
-    """Render a result panel immediately when the relevant stage completes.
-
-    Called after each stage widget collapses — st.* calls here append below
-    all existing widgets, giving true append-only ordering.
-    """
-    if event.stage == "INTAKE" and "grade" in accumulated and "risk" in accumulated:
+    if event.stage == "GATHER" and "grade" in accumulated and "environment" in accumulated:
         st.divider()
         col1, col2 = st.columns(2)
         with col1:
-            render_risk_panel(EditorialRiskProfile.model_validate(accumulated["risk"]))
+            render_environment_panel(EditorialEnvironment.model_validate(accumulated["environment"]))
         with col2:
             render_grade_panel(ContentGrade.model_validate(accumulated["grade"]))
+        if "audit" in accumulated:
+            st.subheader("Sources")
+            tab1, tab2 = st.tabs(["Existing Citations", "New Sources"])
+            with tab1:
+                for s in accumulated["audit"]:
+                    icon = "✅" if s["recommendation"] == "USE" else (
+                        "⚠️" if s["recommendation"] == "WEAK" else "❌"
+                    )
+                    note = f" ({s['status']})" if s["status"] != "LIVE" else ""
+                    st.write(
+                        f"{icon} [{s['overall_score']:.1f}] `{s['domain_type']}`{note}"
+                        f" — {s['url'][:80]}"
+                    )
+                    if s.get("topic_coverage_summary"):
+                        st.caption(f"   {s['topic_coverage_summary']}")
+            with tab2:
+                new = accumulated.get("new_sources", [])
+                if not new:
+                    st.write("_(none found)_")
+                for s in new:
+                    st.write(f"➕ [{s['overall_score']:.1f}] `{s['domain_type']}` — {s['url'][:80]}")
+                    if s.get("topic_coverage_summary"):
+                        st.caption(f"   {s['topic_coverage_summary']}")
 
-    elif event.stage == "PLAN" and "plan" in accumulated and "article" in accumulated:
+    elif event.stage == "ASSESS" and "assessment" in accumulated:
         st.divider()
-        st.subheader("Improvement Plan")
-        render_plan_chart(
-            WikiArticle.model_validate(accumulated["article"]),
-            ContentGrade.model_validate(accumulated["grade"]),
-            ImprovementPlan.model_validate(accumulated["plan"]),
-            EditorialRiskProfile.model_validate(accumulated["risk"]),
-        )
+        render_assessment_panel(ArticleAssessment.model_validate(accumulated["assessment"]))
 
-    elif event.stage == "CLAIMS" and "claim_map" in accumulated:
+    elif event.stage == "PLAN" and "dag" in accumulated:
         st.divider()
-        render_claim_map(ClaimMap.model_validate(accumulated["claim_map"]))
+        render_dag_panel(accumulated["dag"], accumulated.get("dag_narrative", ""))
 
-    elif event.stage == "SOURCES" and "audit" in accumulated:
-        st.divider()
-        st.subheader("Sources")
-        tab1, tab2 = st.tabs(["Existing Citations", "New Sources"])
-        with tab1:
-            for s in accumulated["audit"]:
-                icon = "✅" if s["recommendation"] == "USE" else (
-                    "⚠️" if s["recommendation"] == "WEAK" else "❌"
-                )
-                note = f" ({s['status']})" if s["status"] != "LIVE" else ""
-                st.write(
-                    f"{icon} [{s['overall_score']:.1f}] `{s['domain_type']}`{note} — {s['url'][:80]}"
-                )
-                if s.get("claim_support_summary"):
-                    st.caption(f"   {s['claim_support_summary']}")
-        with tab2:
-            for s in accumulated.get("new_sources", []):
-                st.write(f"➕ [{s['overall_score']:.1f}] `{s['domain_type']}` — {s['url'][:80]}")
-                if s.get("claim_support_summary"):
-                    st.caption(f"   {s['claim_support_summary']}")
-
-    elif event.stage == "DRAFT" and "section_drafts" in accumulated:
+    elif event.stage == "EXEC" and "section_drafts" in accumulated:
         st.divider()
         render_diff_view(accumulated["section_drafts"])
+
+    elif event.stage == "CRITIQUE" and "critique" in accumulated:
+        st.divider()
+        render_critique_panel(CritiqueResult.model_validate(accumulated["critique"]))
 
     elif event.stage == "GRADE" and "proposal" in accumulated:
         st.divider()

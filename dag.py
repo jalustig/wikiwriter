@@ -7,6 +7,27 @@ from typing import Any, AsyncGenerator, Callable
 from models import ProgressEvent, TaskNode
 
 
+def dag_layers(dag: dict) -> list[list[str]]:
+    """Group DAG node IDs (keyed dict of {id: {type, params, deps}}) into topological depth layers."""
+    depths: dict[str, int] = {}
+
+    def depth(nid: str) -> int:
+        if nid in depths:
+            return depths[nid]
+        deps = dag[nid].get("deps", []) if isinstance(dag[nid], dict) else dag[nid].deps
+        depths[nid] = (1 + max(depth(d) for d in deps)) if deps else 0
+        return depths[nid]
+
+    for nid in dag:
+        depth(nid)
+
+    max_d = max(depths.values(), default=0)
+    layers: list[list[str]] = [[] for _ in range(max_d + 1)]
+    for nid, d in sorted(depths.items()):
+        layers[d].append(nid)
+    return layers
+
+
 def build_dag(raw_tasks: list[dict]) -> dict[str, TaskNode]:
     """Convert edit_planner JSON output into a dict of TaskNode objects."""
     return {
