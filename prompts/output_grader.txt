@@ -1,0 +1,38 @@
+You are evaluating the quality of a revised Wikipedia article draft.
+
+Article: {article_title}
+
+Use the same rubric as the Wikipedia content assessment scale.
+
+Revised article text:
+{assembled_draft}
+
+Score the article on these 7 dimensions (0.0–10.0 each):
+
+1. **citation_coverage** (weight: 0.20) — What fraction of specific factual claims have inline citations?
+2. **citation_quality** (weight: 0.15) — How reliable and appropriate are the cited sources?
+3. **npov** (weight: 0.20) — How neutral and free of bias is the text?
+4. **prose_quality** (weight: 0.15) — How clear, encyclopedic, and well-written is the prose?
+5. **structural_completeness** (weight: 0.15) — How thoroughly does the article cover the topic?
+6. **freshness** (weight: 0.10) — How current and up-to-date is the information?
+7. **lead_quality** (weight: 0.05) — How well does the lead section summarize the article?
+
+Also score each section individually (0.0–10.0).
+
+Return JSON with this structure:
+{{
+  "dimension_scores": {{
+    "citation_coverage": 7.5,
+    "citation_quality": 8.0,
+    "npov": 9.0,
+    "prose_quality": 7.0,
+    "structural_completeness": 6.5,
+    "freshness": 7.0,
+    "lead_quality": 8.0
+  }},
+  "section_grades": {{
+    "Lead": 8.0,
+    "History": 7.5
+  }},
+  "narrative": "One paragraph assessment of overall quality and key strengths/weaknesses."
+}}

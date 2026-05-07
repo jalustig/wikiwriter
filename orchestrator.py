@@ -3,7 +3,8 @@
 
 import asyncio
 
-from models import ProgressEvent
+from models import ProgressEvent, WikiArticle, ContentGrade, EditorialRiskProfile
+from models import ImprovementPlan, SourceEvaluation, SectionDraft, CritiqueResult, EditProposal
 from tools.wikipedia import fetch_article
 from workers.article_grader import ArticleGrader
 from workers.editorial_context import EditorialContextAnalyzer
@@ -11,8 +12,10 @@ from workers.planner import Planner
 from workers.claim_extractor import ClaimExtractor
 from workers.source_evaluator import SourceEvaluator
 from workers.source_discovery import SourceDiscovery
-from workers.draft_writer import DraftWriter, _assemble_source_report
+from workers.draft_writer import DraftWriter, _assemble_source_report, _build_diff
 from workers.synthesis_writer import SynthesisWriter
+from workers.critic import Critic
+from workers.output_grader import OutputGrader
 
 
 class WikiWriterOrchestrator:
@@ -25,6 +28,8 @@ class WikiWriterOrchestrator:
         self.source_discovery = SourceDiscovery()
         self.draft_writer = DraftWriter()
         self.synthesis_writer = SynthesisWriter()
+        self.critic = Critic()
+        self.output_grader = OutputGrader()
 
     async def run(self, url: str):
         # Stage 1: Fetch article
@@ -161,4 +166,114 @@ class WikiWriterOrchestrator:
                 "section_drafts": [d.model_dump() for d in section_drafts],
                 "assembled": assembled,
             },
+        )
+
+        # Stage 7: Critique loop (max 2 revisions)
+        yield ProgressEvent(stage="CRITIQUE", status="running", message="Running critique...")
+        critique, final_draft = await self._critique_loop(assembled, source_report)
+        yield ProgressEvent(
+            stage="CRITIQUE",
+            status="done",
+            message=f"Verdict: {critique.overall_verdict}",
+            data={"critique": critique.model_dump()},
+        )
+
+        if critique.overall_verdict == "DISCARD":
+            yield ProgressEvent(
+                stage="CRITIQUE",
+                status="error",
+                message=f"Edit discarded: {critique.discard_reason}",
+            )
+            return
+
+        # Stage 8: Output grading + proposal assembly
+        yield ProgressEvent(stage="GRADE", status="running", message="Grading final output...")
+        output_grade = await self.output_grader.run(final_draft, article)
+        quality_delta = output_grade.overall_score - content_grade.overall_score
+        yield ProgressEvent(
+            stage="GRADE",
+            status="done",
+            message=f"Output grade: {output_grade.letter_grade} (Δ {quality_delta:+.1f})",
+        )
+
+        proposal = self._build_proposal(
+            article=article,
+            content_grade=content_grade,
+            output_grade=output_grade,
+            editorial_risk=editorial_risk,
+            plan=plan,
+            audit_results=audit_results,
+            new_sources=new_sources,
+            section_drafts=section_drafts,
+            critique=critique,
+            final_draft=final_draft,
+        )
+        yield ProgressEvent(
+            stage="GRADE",
+            status="done",
+            message="Pipeline complete.",
+            data={"proposal": proposal.model_dump()},
+        )
+
+    async def _critique_loop(
+        self, draft: str, source_report: str, cycles: int = 0
+    ) -> tuple[CritiqueResult, str]:
+        if cycles >= 2:
+            return CritiqueResult(
+                overall_verdict="DISCARD",
+                dimension_results={},
+                revision_instructions=[],
+                discard_reason="Failed critique twice — fundamental issues not resolvable by revision",
+            ), draft
+        critique = await self.critic.run(draft, source_report)
+        if critique.overall_verdict == "PASS":
+            return critique, draft
+        if critique.overall_verdict == "REVISE":
+            revised = await self.draft_writer.revise(
+                draft, critique.revision_instructions, source_report
+            )
+            return await self._critique_loop(revised, source_report, cycles + 1)
+        return critique, draft
+
+    def _build_proposal(
+        self,
+        article: WikiArticle,
+        content_grade: ContentGrade,
+        output_grade: ContentGrade,
+        editorial_risk: EditorialRiskProfile,
+        plan: ImprovementPlan,
+        audit_results: list[SourceEvaluation],
+        new_sources: list[SourceEvaluation],
+        section_drafts: list[SectionDraft],
+        critique: CritiqueResult,
+        final_draft: str,
+    ) -> EditProposal:
+        original_text = "\n\n".join(
+            article.section_texts.get(s, "") for s in article.sections
+        )
+        full_diff = _build_diff(original_text, final_draft)
+
+        edited_sections = [d.section_name for d in section_drafts if d.changes_made]
+        summary_parts = [f"AI-assisted edit: improved {', '.join(edited_sections[:3])}"]
+        if len(edited_sections) > 3:
+            summary_parts.append(f"and {len(edited_sections) - 3} more sections")
+        new_urls = [s.url for s in new_sources[:3]]
+        if new_urls:
+            summary_parts.append(f"Added sources: {', '.join(new_urls)}")
+        summary_parts.append("([[Wikipedia:Bots/Requests for approval/WikiWriter|WikiWriter AI]])")
+        disclosure_edit_summary = ". ".join(summary_parts)
+
+        return EditProposal(
+            article=article,
+            input_grade=content_grade,
+            output_grade=output_grade,
+            quality_delta=round(output_grade.overall_score - content_grade.overall_score, 2),
+            editorial_risk=editorial_risk,
+            improvement_plan=plan,
+            source_audit=audit_results,
+            new_sources=new_sources,
+            section_drafts=section_drafts,
+            critique=critique,
+            full_diff=full_diff,
+            disclosure_edit_summary=disclosure_edit_summary,
         )

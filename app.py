@@ -7,7 +7,10 @@ import difflib
 import plotly.graph_objects as go
 import streamlit as st
 
-from models import ProgressEvent, WikiArticle, ContentGrade, EditorialRiskProfile, ImprovementPlan, ClaimMap
+from models import (
+    ProgressEvent, WikiArticle, ContentGrade, EditorialRiskProfile,
+    ImprovementPlan, ClaimMap, CritiqueResult, EditProposal,
+)
 from orchestrator import WikiWriterOrchestrator
 
 STATUS_COLORS = {
@@ -32,6 +35,8 @@ STAGE_LABELS = {
     "CLAIMS": "Extract claims",
     "SOURCES": "Audit & discover sources",
     "DRAFT": "Draft sections",
+    "CRITIQUE": "Critique draft",
+    "GRADE": "Grade output",
 }
 
 RISK_COLORS = {
@@ -204,6 +209,64 @@ def render_diff_view(section_drafts: list[dict]) -> None:
                 st.write("**Citations removed:**", ", ".join(cites_removed))
 
 
+VERDICT_COLORS = {"PASS": "green", "REVISE": "orange", "DISCARD": "red"}
+
+
+def render_critique_panel(critique: CritiqueResult) -> None:
+    st.subheader("Critique")
+    color = VERDICT_COLORS.get(critique.overall_verdict, "gray")
+    st.markdown(
+        f"<span style='background:{color};color:white;padding:4px 10px;"
+        f"border-radius:4px;font-weight:bold;'>{critique.overall_verdict}</span>",
+        unsafe_allow_html=True,
+    )
+    st.write("")
+    for dim, result in critique.dimension_results.items():
+        icon = "✅" if result.verdict == "PASS" else "❌"
+        st.write(f"{icon} **{dim.replace('_', ' ').title()}**: {result.notes}")
+    if critique.discard_reason:
+        st.error(f"Discard reason: {critique.discard_reason}")
+
+
+def render_proposal_panel(proposal: EditProposal) -> None:
+    st.subheader("Edit Proposal")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric(
+        "Input Grade",
+        f"{proposal.input_grade.letter_grade}",
+        f"{proposal.input_grade.overall_score:.1f}/10",
+    )
+    col2.metric(
+        "Output Grade",
+        f"{proposal.output_grade.letter_grade}",
+        f"{proposal.output_grade.overall_score:.1f}/10",
+    )
+    delta = proposal.quality_delta
+    col3.metric("Quality Delta", f"{delta:+.1f}", delta_color="normal")
+
+    render_critique_panel(proposal.critique)
+
+    with st.expander("Article Diff", expanded=False):
+        if proposal.full_diff:
+            st.code(proposal.full_diff, language="diff")
+        else:
+            st.write("_(no diff available)_")
+
+    st.divider()
+    st.subheader("Submit to Wikipedia")
+    st.text_area(
+        "Edit summary (copy this into Wikipedia's edit summary box)",
+        proposal.disclosure_edit_summary,
+        height=80,
+    )
+    col1, col2 = st.columns(2)
+    if col1.button("✅ Approve edit", type="primary"):
+        st.success("Approved. Copy the edit summary above and apply the diff to Wikipedia manually.")
+    if col2.button("❌ Reject"):
+        st.warning("Edit rejected.")
+
+
 CLAIM_STATUS_ICONS = {
     "cited": "✅",
     "undercited": "⚠️",
@@ -330,6 +393,25 @@ def main():
                 st.write(f"➕ [{s['overall_score']:.1f}] `{s['domain_type']}` — {s['url'][:80]}")
                 if s.get("claim_support_summary"):
                     st.caption(f"   {s['claim_support_summary']}")
+
+    # Final proposal panel (critique + quality delta + approve/reject)
+    grade_event = next(
+        (e for e in reversed(events) if e.stage == "GRADE" and e.status == "done" and e.data),
+        None,
+    )
+    if grade_event and grade_event.data and "proposal" in grade_event.data:
+        proposal = EditProposal.model_validate(grade_event.data["proposal"])
+        st.divider()
+        render_proposal_panel(proposal)
+    elif next((e for e in events if e.stage == "CRITIQUE" and e.status == "done"), None):
+        critique_event = next(
+            (e for e in reversed(events) if e.stage == "CRITIQUE" and e.status == "done"),
+            None,
+        )
+        if critique_event and critique_event.data:
+            critique = CritiqueResult.model_validate(critique_event.data["critique"])
+            st.divider()
+            render_critique_panel(critique)
 
 
 if __name__ == "__main__":

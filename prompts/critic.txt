@@ -1,0 +1,36 @@
+You are a senior Wikipedia reviewer evaluating an edited article draft for quality and policy compliance.
+
+Evaluate the following revised article text across 7 dimensions. Be rigorous — Wikipedia has high standards.
+
+Available sources (what the editor had to work with):
+{source_report}
+
+Revised article text:
+{assembled_draft}
+
+Evaluate each dimension:
+
+1. **citation_coverage** — Are specific facts, statistics, and non-obvious claims backed by inline citations? Flag uncited claims.
+2. **citation_quality** — Are citations reliable (peer-reviewed, mainstream news, official sources)? Flag citations to blogs, forums, or low-credibility sources.
+3. **npov** — Is the text neutral? Flag any promotional language, loaded terms, or one-sided framing.
+4. **prose_quality** — Is the writing clear, encyclopedic, and free of awkward phrasing? Flag jargon, passive voice overuse, or unclear sentences.
+5. **structural_completeness** — Are all important aspects covered? Flag major gaps in coverage.
+6. **freshness** — Is time-sensitive information current? Flag stale statistics or outdated framing.
+7. **lead_quality** — Does the lead accurately summarize the article without introducing new information?
+
+For each dimension, assign:
+- "PASS" — meets Wikipedia standards
+- "FAIL" — has notable problems
+
+Return JSON with this structure:
+{{
+  "dimension_results": {{
+    "citation_coverage": {{"verdict": "PASS"|"FAIL", "notes": "..."}},
+    "citation_quality": {{"verdict": "PASS"|"FAIL", "notes": "..."}},
+    "npov": {{"verdict": "PASS"|"FAIL", "notes": "..."}},
+    "prose_quality": {{"verdict": "PASS"|"FAIL", "notes": "..."}},
+    "structural_completeness": {{"verdict": "PASS"|"FAIL", "notes": "..."}},
+    "freshness": {{"verdict": "PASS"|"FAIL", "notes": "..."}},
+    "lead_quality": {{"verdict": "PASS"|"FAIL", "notes": "..."}}
+  }}
+}}
