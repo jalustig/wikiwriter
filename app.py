@@ -8,6 +8,7 @@ import re
 import plotly.graph_objects as go
 import streamlit as st
 
+from constants import STAGE_META
 from models import (
     WikiArticle, ContentGrade, EditorialRiskProfile,
     ImprovementPlan, ClaimMap, CritiqueResult, EditProposal,
@@ -27,17 +28,6 @@ MODE_SHORT = {
     "Section Rewrite":          "Rewrite",
     "Contradiction Integration": "Contradict",
     "Synthesis Pass":           "Synthesis",
-}
-
-STAGE_META = {
-    "FETCH":    ("🌐", "Reading article…",        "Read article"),
-    "INTAKE":   ("📊", "Assessing quality…",       "Quality assessed"),
-    "PLAN":     ("🗺️",  "Planning edits…",          "Edit plan ready"),
-    "CLAIMS":   ("🔎", "Tagging claims…",          "Claims tagged"),
-    "SOURCES":  ("🔍", "Evaluating sources…",      "Sources evaluated"),
-    "DRAFT":    ("✏️",  "Writing drafts…",          "Drafts written"),
-    "CRITIQUE": ("🔬", "Reviewing draft…",         "Draft reviewed"),
-    "GRADE":    ("📈", "Scoring output…",          "Output scored"),
 }
 
 RISK_COLORS = {"LOW": "green", "MODERATE": "orange", "HIGH": "red", "CRITICAL": "red"}
