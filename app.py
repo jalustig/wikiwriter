@@ -1,14 +1,12 @@
-# ABOUTME: Streamlit app — live per-stage progress with inline thinking and progressive panel rendering.
-# ABOUTME: Results (environment, grade, assessment, DAG, diffs, critique) appear as each stage completes.
+# ABOUTME: Streamlit app — sidebar agent loop diagram, two-tab layout (Run/Debug).
+# ABOUTME: Run tab shows flat thinking feed + results; Debug tab shows raw data panels.
 
 import asyncio
-import io
 
 import streamlit as st
-from PIL import Image, ImageDraw, ImageFont
 
 from constants import STAGE_META
-from dag import dag_layers
+from dag_image import render_agent_loop, render_task_dag
 from diff_utils import section_diff_html
 from models import (
     ContentGrade, EditorialEnvironment, ArticleAssessment,
@@ -20,107 +18,9 @@ CAUTION_COLORS = {"LOW": "green", "MODERATE": "orange", "HIGH": "red", "CRITICAL
 VERDICT_COLORS = {
     "PASS": "#16A34A", "REVISE": "#D97706", "PARTIAL_ACCEPT": "#2563EB", "DISCARD": "#DC2626",
 }
-CLAIM_ICONS = {"cited": "✅", "undercited": "⚠️", "uncited": "❌", "consensus-uncited": "ℹ️"}
 
 
-# ── DAG image renderer ─────────────────────────────────────────────────────────
-
-_TYPE_COLORS = {
-    "research_section":   ("#DBEAFE", "#3B82F6"),   # blue
-    "draft_section":      ("#DCFCE7", "#16A34A"),   # green
-    "synthesize":         ("#F3E8FF", "#9333EA"),   # purple
-    "draft_full_article": ("#FEF9C3", "#CA8A04"),   # amber
-}
-_DEFAULT_NODE_COLOR = ("#F1F5F9", "#64748B")
-
-
-def _dag_png(dag: dict) -> bytes:
-    """Render DAG as a PNG image (bytes). Nodes are colour-coded by type, layers flow left→right."""
-    layers = dag_layers(dag)
-
-    NW, NH = 230, 66    # node width / height (px)
-    HG, VG = 72, 14     # horizontal / vertical gap between nodes
-    PAD = 40            # canvas padding
-
-    n_layers = len(layers)
-    max_per_layer = max(len(layer) for layer in layers)
-
-    W = n_layers * NW + (n_layers - 1) * HG + 2 * PAD
-    H = max(160, max_per_layer * NH + (max_per_layer - 1) * VG + 2 * PAD)
-
-    # Compute pixel centres for every node
-    pos: dict[str, tuple[int, int]] = {}
-    for li, layer in enumerate(layers):
-        n = len(layer)
-        col_h = n * NH + (n - 1) * VG
-        y0 = (H - col_h) // 2
-        for i, nid in enumerate(layer):
-            cx = PAD + li * (NW + HG) + NW // 2
-            cy = y0 + i * (NH + VG) + NH // 2
-            pos[nid] = (cx, cy)
-
-    img = Image.new("RGB", (W, H), "#F8FAFC")
-    draw = ImageDraw.Draw(img)
-
-    try:
-        f_label = ImageFont.load_default(size=13)
-        f_small = ImageFont.load_default(size=11)
-        f_id = ImageFont.load_default(size=10)
-    except TypeError:                          # older Pillow fallback
-        f_label = f_small = f_id = ImageFont.load_default()
-
-    # Edges (drawn first so nodes appear on top)
-    for nid, node in dag.items():
-        cx2, cy2 = pos[nid]
-        for dep in node.get("deps", []):
-            cx1, cy1 = pos[dep]
-            x_start = cx1 + NW // 2
-            x_end = cx2 - NW // 2 - 1
-            # Horizontal line from right edge → arrow tip
-            draw.line([(x_start, cy1), (x_end - 4, cy2)], fill="#94A3B8", width=2)
-            # Arrowhead
-            draw.polygon(
-                [(x_end - 9, cy2 - 5), (x_end - 9, cy2 + 5), (x_end, cy2)],
-                fill="#94A3B8",
-            )
-
-    # Nodes
-    for nid, node in dag.items():
-        cx, cy = pos[nid]
-        x0, y0 = cx - NW // 2 + 1, cy - NH // 2 + 1
-        x1, y1 = cx + NW // 2 - 1, cy + NH // 2 - 1
-
-        fill, border = _TYPE_COLORS.get(node.get("type", ""), _DEFAULT_NODE_COLOR)
-        draw.rounded_rectangle([x0, y0, x1, y1], radius=8, fill=fill, outline=border, width=2)
-
-        # Small ID badge in top-left corner
-        draw.text((x0 + 7, y0 + 5), f"[{nid}]", fill=border, font=f_id)
-
-        # Type name centred vertically (slight upward shift when params present)
-        params = node.get("params", {})
-        type_label = node.get("type", "").replace("_", " ")
-        has_params = bool(params)
-        draw.text(
-            (cx, cy - 7 if has_params else cy),
-            type_label,
-            fill="#1E293B",
-            anchor="mm",
-            font=f_label,
-        )
-
-        # Params line beneath the type label
-        if has_params:
-            pstr = "  ".join(str(v) for v in params.values())
-            if len(pstr) > 30:
-                pstr = pstr[:28] + "…"
-            draw.text((cx, cy + 10), pstr, fill="#475569", anchor="mm", font=f_small)
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-
-# ── Panel renderers ────────────────────────────────────────────────────────────
+# ── Debug panel renderers ──────────────────────────────────────────────────────
 
 def render_environment_panel(env: EditorialEnvironment) -> None:
     st.subheader("Editorial Environment")
@@ -174,16 +74,6 @@ def render_assessment_panel(assessment: ArticleAssessment) -> None:
         st.write(f"{icon} **{s.name}** {tag} — {s.rationale}")
 
 
-def render_dag_panel(dag: dict, narrative: str) -> None:
-    st.subheader("Task DAG")
-    if not dag:
-        st.write("_(empty plan)_")
-        return
-    png = _dag_png(dag)
-    st.image(png, use_container_width=True)
-    st.caption(narrative)
-
-
 def render_section_diff(draft: dict) -> None:
     changes = draft.get("changes_made", [])
     header = f"**{draft['section_name']}**" + (f" — {changes[0]}" if changes else "")
@@ -205,7 +95,7 @@ def render_section_diff(draft: dict) -> None:
                 st.write(f"**{label}:**", ", ".join(cites))
 
 
-def render_diff_view(section_drafts: list[dict]) -> None:
+def render_diff_view(section_drafts: list) -> None:
     st.subheader("Section Drafts")
     if not section_drafts:
         st.write("No drafts available.")
@@ -223,7 +113,6 @@ def render_critique_panel(critique: CritiqueResult) -> None:
         unsafe_allow_html=True,
     )
     st.write("")
-
     if critique.section_results:
         for sec_name, sec_result in critique.section_results.items():
             icon = "✅" if sec_result.verdict == "PASS" else "❌"
@@ -237,7 +126,6 @@ def render_critique_panel(critique: CritiqueResult) -> None:
         for dim, result in critique.dimension_results.items():
             icon = "✅" if result.verdict == "PASS" else "❌"
             st.write(f"{icon} **{dim.replace('_', ' ').title()}**: {result.notes}")
-
     if critique.revision_instructions:
         st.write("**Revision instructions:**")
         for instr in critique.revision_instructions:
@@ -254,9 +142,7 @@ def render_proposal_panel(proposal: EditProposal) -> None:
     col2.metric("Output Grade",
                 proposal.output_grade.letter_grade, f"{proposal.output_grade.overall_score:.1f}/10")
     col3.metric("Quality Delta", f"{proposal.quality_delta:+.1f}", delta_color="normal")
-
     render_critique_panel(proposal.critique)
-
     if proposal.edit_summary:
         st.divider()
         st.subheader("Editorial Summary")
@@ -268,7 +154,6 @@ def render_proposal_panel(proposal: EditProposal) -> None:
             proposal.edit_summary.disclosure_line,
             height=80,
         )
-
     col1, col2 = st.columns(2)
     if col1.button("✅ Approve edit", type="primary"):
         st.success("Approved. Copy the edit summary above and apply the diff to Wikipedia manually.")
@@ -279,106 +164,213 @@ def render_proposal_panel(proposal: EditProposal) -> None:
 # ── Live streaming runner ──────────────────────────────────────────────────────
 
 def run_and_render(url: str) -> None:
-    stage_widgets: dict[str, object] = {}
-    accumulated: dict = {}
-    prev_stage: list[str] = []
+    # ── Sidebar placeholders ───────────────────────────────────────────────────
+    with st.sidebar:
+        st.markdown("#### Agent Loop")
+        loop_ph = st.empty()
+        st.markdown("---")
+        st.markdown("#### Task DAG")
+        dag_ph = st.empty()
+        st.markdown("---")
+        counter_ph = st.empty()
 
-    async def stream():
+    # Render initial agent loop image (all pending)
+    loop_ph.image(render_agent_loop([], None, set(), 0), use_container_width=True)
+
+    # ── Main tabs ──────────────────────────────────────────────────────────────
+    tab_run, tab_debug = st.tabs(["▶ Run", "🔬 Debug"])
+
+    with tab_run:
+        feed_ph = st.empty()
+        results_ph = st.empty()
+
+    with tab_debug:
+        debug_ph = st.empty()
+
+    # ── Mutable state ──────────────────────────────────────────────────────────
+    state = {
+        "stage_history": [],
+        "current_stage": None,
+        "done_stages": set(),
+        "loop_count": 0,
+        "feed_lines": [],
+        "last_feed_stage": None,
+        "accumulated": {},
+        "task_dag": {},
+        "done_nodes": set(),
+        "current_nodes": set(),
+    }
+
+    def _refresh_loop_image():
+        png = render_agent_loop(
+            state["stage_history"],
+            state["current_stage"],
+            state["done_stages"],
+            state["loop_count"],
+        )
+        loop_ph.image(png, use_container_width=True)
+
+    def _refresh_dag_image():
+        if state["task_dag"]:
+            png = render_task_dag(
+                state["task_dag"],
+                state["done_nodes"],
+                state["current_nodes"],
+            )
+            dag_ph.image(png, use_container_width=True)
+
+    def _append_thought(stage: str, text: str):
+        _, running_label, _ = STAGE_META.get(stage, ("•", stage, stage))
+        if state["last_feed_stage"] != stage:
+            state["feed_lines"].append(f"---\n**{running_label}**\n")
+            state["last_feed_stage"] = stage
+        state["feed_lines"].append(text)
+        feed_ph.markdown("\n\n".join(state["feed_lines"]))
+
+    def _render_debug(acc: dict) -> None:
+        with debug_ph.container():
+            if "grade" in acc and "environment" in acc:
+                st.markdown("### Gather")
+                col1, col2 = st.columns(2)
+                with col1:
+                    render_environment_panel(EditorialEnvironment.model_validate(acc["environment"]))
+                with col2:
+                    render_grade_panel(ContentGrade.model_validate(acc["grade"]))
+                if "audit" in acc:
+                    st.subheader("Sources")
+                    stab1, stab2 = st.tabs(["Existing Citations", "New Sources"])
+                    with stab1:
+                        for s in acc["audit"]:
+                            icon = "✅" if s["recommendation"] == "USE" else (
+                                "⚠️" if s["recommendation"] == "WEAK" else "❌"
+                            )
+                            note = f" ({s['status']})" if s["status"] != "LIVE" else ""
+                            st.write(
+                                f"{icon} [{s['overall_score']:.1f}] `{s['domain_type']}`{note}"
+                                f" — {s['url'][:80]}"
+                            )
+                            if s.get("topic_coverage_summary"):
+                                st.caption(f"   {s['topic_coverage_summary']}")
+                    with stab2:
+                        new = acc.get("new_sources", [])
+                        if not new:
+                            st.write("_(none found)_")
+                        for s in new:
+                            st.write(
+                                f"➕ [{s['overall_score']:.1f}] `{s['domain_type']}`"
+                                f" — {s['url'][:80]}"
+                            )
+                            if s.get("topic_coverage_summary"):
+                                st.caption(f"   {s['topic_coverage_summary']}")
+
+            if "assessment" in acc:
+                st.markdown("### Assess")
+                render_assessment_panel(ArticleAssessment.model_validate(acc["assessment"]))
+
+            if "dag" in acc and state["task_dag"]:
+                st.markdown("### Plan")
+                png = render_task_dag(state["task_dag"], set(), set())
+                st.image(png, use_container_width=True)
+                st.caption(acc.get("dag_narrative", ""))
+
+            if "section_drafts" in acc:
+                st.markdown("### Execute")
+                render_diff_view(acc["section_drafts"])
+
+            if "critique" in acc:
+                st.markdown("### Critique")
+                render_critique_panel(CritiqueResult.model_validate(acc["critique"]))
+
+            if "proposal" in acc:
+                st.markdown("### Grade")
+                proposal = EditProposal.model_validate(acc["proposal"])
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Input Grade",
+                            proposal.input_grade.letter_grade,
+                            f"{proposal.input_grade.overall_score:.1f}/10")
+                col2.metric("Output Grade",
+                            proposal.output_grade.letter_grade,
+                            f"{proposal.output_grade.overall_score:.1f}/10")
+                col3.metric("Quality Delta", f"{proposal.quality_delta:+.1f}", delta_color="normal")
+
+    async def _stream():
         async for event in WikiWriterOrchestrator().run(url):
             stage = event.stage
-            icon, running_label, done_label = STAGE_META.get(stage, ("•", stage, stage))
 
-            if stage not in stage_widgets:
-                stage_widgets[stage] = st.status(f"{icon} {running_label}", expanded=True)
-            widget = stage_widgets[stage]
+            # Stage transition bookkeeping
+            if stage != state["current_stage"]:
+                if stage in state["done_stages"]:
+                    state["loop_count"] += 1
+                state["current_stage"] = stage
+                state["stage_history"].append(stage)
+                _refresh_loop_image()
 
             if event.status == "thinking":
-                widget.markdown(f"*{event.message}*")
+                _append_thought(stage, f"*{event.message}*")
+
             elif event.status == "running":
-                if "/" in event.message:
-                    widget.update(label=f"{icon} {event.message}")
-                else:
-                    widget.markdown(event.message)
+                if event.count is not None and event.total is not None:
+                    counter_ph.markdown(
+                        f"**{event.message}:** {event.count} / {event.total}"
+                    )
+                # Track in-flight DAG node
+                if stage == "EXEC" and event.message and ":" in event.message:
+                    node_id = event.message.split(":")[0].strip()
+                    if node_id in state["task_dag"]:
+                        state["current_nodes"].add(node_id)
+                        _refresh_dag_image()
+
             elif event.status == "done":
-                if prev_stage:
-                    stage_widgets[prev_stage[0]].update(expanded=False)
-                widget.update(
-                    label=f"{icon} {done_label} — {event.message}",
-                    state="complete", expanded=True,
-                )
-                prev_stage[:] = [stage]
+                state["done_stages"].add(stage)
+                counter_ph.empty()
+
                 if event.data:
-                    accumulated.update(event.data)
-                _render_inline(event, accumulated)
+                    state["accumulated"].update(event.data)
+                    if "dag" in event.data:
+                        state["task_dag"] = event.data["dag"]
+                        state["done_nodes"].clear()
+                        state["current_nodes"].clear()
+                        _refresh_dag_image()
+
+                # Mark DAG node done during EXEC
+                if stage == "EXEC" and event.message and ":" in event.message:
+                    node_id = event.message.split(":")[0].strip()
+                    if node_id in state["task_dag"]:
+                        state["current_nodes"].discard(node_id)
+                        state["done_nodes"].add(node_id)
+                        _refresh_dag_image()
+
+                _refresh_loop_image()
+                _render_debug(state["accumulated"])
+
             elif event.status == "error":
-                widget.update(label=f"{icon} {event.message}", state="error", expanded=True)
+                _append_thought(stage, f"❌ **{event.message}**")
+                _refresh_loop_image()
 
-    asyncio.run(stream())
+    asyncio.run(_stream())
 
-
-def _render_inline(event, accumulated: dict) -> None:
-    if event.stage == "GATHER" and "grade" in accumulated and "environment" in accumulated:
+    # Render results in Run tab after run completes
+    acc = state["accumulated"]
+    with results_ph.container():
         st.divider()
-        col1, col2 = st.columns(2)
-        with col1:
-            render_environment_panel(EditorialEnvironment.model_validate(accumulated["environment"]))
-        with col2:
-            render_grade_panel(ContentGrade.model_validate(accumulated["grade"]))
-        if "audit" in accumulated:
-            st.subheader("Sources")
-            tab1, tab2 = st.tabs(["Existing Citations", "New Sources"])
-            with tab1:
-                for s in accumulated["audit"]:
-                    icon = "✅" if s["recommendation"] == "USE" else (
-                        "⚠️" if s["recommendation"] == "WEAK" else "❌"
-                    )
-                    note = f" ({s['status']})" if s["status"] != "LIVE" else ""
-                    st.write(
-                        f"{icon} [{s['overall_score']:.1f}] `{s['domain_type']}`{note}"
-                        f" — {s['url'][:80]}"
-                    )
-                    if s.get("topic_coverage_summary"):
-                        st.caption(f"   {s['topic_coverage_summary']}")
-            with tab2:
-                new = accumulated.get("new_sources", [])
-                if not new:
-                    st.write("_(none found)_")
-                for s in new:
-                    st.write(f"➕ [{s['overall_score']:.1f}] `{s['domain_type']}` — {s['url'][:80]}")
-                    if s.get("topic_coverage_summary"):
-                        st.caption(f"   {s['topic_coverage_summary']}")
-
-    elif event.stage == "ASSESS" and "assessment" in accumulated:
-        st.divider()
-        render_assessment_panel(ArticleAssessment.model_validate(accumulated["assessment"]))
-
-    elif event.stage == "PLAN" and "dag" in accumulated:
-        st.divider()
-        render_dag_panel(accumulated["dag"], accumulated.get("dag_narrative", ""))
-
-    elif event.stage == "EXEC" and "section_drafts" in accumulated:
-        st.divider()
-        render_diff_view(accumulated["section_drafts"])
-
-    elif event.stage == "CRITIQUE" and "critique" in accumulated:
-        st.divider()
-        render_critique_panel(CritiqueResult.model_validate(accumulated["critique"]))
-
-    elif event.stage == "GRADE" and "proposal" in accumulated:
-        st.divider()
-        render_proposal_panel(EditProposal.model_validate(accumulated["proposal"]))
+        if "section_drafts" in acc:
+            render_diff_view(acc["section_drafts"])
+        if "proposal" in acc:
+            render_proposal_panel(EditProposal.model_validate(acc["proposal"]))
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
     st.set_page_config(page_title="WikiWriter", layout="wide")
-    st.title("WikiWriter")
-    st.caption("Quality-first Wikipedia editing agent")
+
+    with st.sidebar:
+        st.title("WikiWriter")
+        st.caption("Quality-first Wikipedia editing agent")
 
     url = st.text_input(
         "Wikipedia article URL",
-        placeholder="https://en.wikipedia.org/wiki/Service_star",
+        placeholder="https://en.wikipedia.org/wiki/Super_Bowl_XXV",
     )
     analyse = st.button("Analyse & draft edit", type="primary")
 
