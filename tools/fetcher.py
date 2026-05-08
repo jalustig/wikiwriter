@@ -1,6 +1,7 @@
 # ABOUTME: Web content fetcher — cleans HTML to readable text for source evaluation.
 # ABOUTME: Falls back to Playwright for JS-rendered/CAPTCHA-gated pages; Wayback for dead URLs.
 
+import random
 import httpx
 from bs4 import BeautifulSoup
 
@@ -8,7 +9,19 @@ from cache import cached
 from tools.wayback import get_archive_url
 
 _MIN_BODY_CHARS = 200
-_HEADERS = {"User-Agent": "WikiWriter/1.0"}
+
+# Realistic browser headers to avoid bot detection
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+_PLAYWRIGHT_UA = _HEADERS["User-Agent"]
 
 _CAPTCHA_MARKERS = (
     "recaptcha",
@@ -46,13 +59,24 @@ def _extract_doi(url: str) -> str | None:
 
 
 async def _fetch_via_playwright(url: str) -> str:
-    """Render page with headless Chromium and return page text."""
+    """Render page with headless Chromium; behaves like a real browser to avoid bot detection."""
     from playwright.async_api import async_playwright
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         try:
-            page = await browser.new_page(user_agent="WikiWriter/1.0")
-            await page.goto(url, timeout=30000, wait_until="networkidle")
+            context = await browser.new_context(
+                user_agent=_PLAYWRIGHT_UA,
+                viewport={"width": 1280, "height": 800},
+                locale="en-US",
+            )
+            page = await context.new_page()
+            # Block images and fonts — we only need text content
+            await page.route(
+                "**/*.{png,jpg,jpeg,gif,webp,svg,ico,woff,woff2,ttf,eot}",
+                lambda route: route.abort(),
+            )
+            await page.goto(url, timeout=25000, wait_until="domcontentloaded")
+            await page.wait_for_timeout(random.uniform(800, 2000))
             content = await page.content()
         finally:
             await browser.close()
@@ -69,7 +93,7 @@ def _html_to_text(html: str) -> str:
 @cached("page_fetch", ttl=7 * 24 * 3600)
 async def fetch_raw(url: str) -> tuple[str, str]:
     """Returns (content_type, raw_content). Raises on HTTP error."""
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30, headers=_HEADERS) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15, headers=_HEADERS) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "").split(";")[0].strip()
@@ -117,10 +141,12 @@ async def fetch_readable(url: str) -> str:
 
     html = None
     content_type = "text/html"
+    fetched_original = False  # True only when we got a response from the original URL
 
     try:
         ct, raw = await fetch_raw(url)
         content_type = ct
+        fetched_original = True
         if _needs_playwright(200, raw):
             html = await _fetch_via_playwright(url)
         else:
@@ -149,7 +175,10 @@ async def fetch_readable(url: str) -> str:
         if archive_url:
             _, html = await fetch_raw(archive_url)
 
-    if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+    # Check URL extension only when we got a direct response; avoid re-fetching
+    # archive-substituted URLs as PDFs when the original returned an error page.
+    is_pdf = "application/pdf" in content_type or (fetched_original and url.lower().endswith(".pdf"))
+    if is_pdf:
         from tools.pdf import extract_pdf_text
         return await extract_pdf_text(url)
 
