@@ -1,0 +1,66 @@
+# ABOUTME: Tests for PIL-based agent loop and task DAG image renderers.
+# ABOUTME: Checks output is valid PNG bytes and responds to state changes.
+
+from dag_image import render_agent_loop, render_task_dag
+
+PNG_MAGIC = b"\x89PNG"
+
+
+def test_agent_loop_returns_png():
+    png = render_agent_loop([], None, set(), 0)
+    assert png[:4] == PNG_MAGIC
+
+
+def test_agent_loop_with_active_stage():
+    png = render_agent_loop(["FETCH"], "FETCH", set(), 0)
+    assert png[:4] == PNG_MAGIC
+    assert len(png) > 1000
+
+
+def test_agent_loop_with_done_stages():
+    png = render_agent_loop(["FETCH", "GATHER"], "GATHER", {"FETCH"}, 0)
+    assert png[:4] == PNG_MAGIC
+
+
+def test_agent_loop_with_back_edge():
+    png_no_loop = render_agent_loop(["FETCH"], "PLAN", {"FETCH", "GATHER", "ASSESS"}, 0)
+    png_loop = render_agent_loop(
+        ["FETCH", "GATHER", "ASSESS", "PLAN", "EXEC", "CRITIQUE", "PLAN"],
+        "PLAN",
+        {"FETCH", "GATHER", "ASSESS", "EXEC", "CRITIQUE"},
+        1,
+    )
+    assert png_loop[:4] == PNG_MAGIC
+    assert png_loop != png_no_loop
+
+
+def test_task_dag_returns_png():
+    dag = {
+        "t1": {"type": "research_section", "params": {"section": "History"}, "deps": []},
+        "t2": {"type": "draft_section", "params": {"section": "History"}, "deps": ["t1"]},
+    }
+    png = render_task_dag(dag, set(), set())
+    assert png[:4] == PNG_MAGIC
+
+
+def test_task_dag_done_nodes():
+    dag = {
+        "t1": {"type": "research_section", "params": {}, "deps": []},
+        "t2": {"type": "draft_section", "params": {}, "deps": ["t1"]},
+    }
+    png_none_done = render_task_dag(dag, set(), set())
+    png_t1_done = render_task_dag(dag, {"t1"}, set())
+    assert png_none_done != png_t1_done
+
+
+def test_task_dag_current_nodes():
+    dag = {"t1": {"type": "research_section", "params": {}, "deps": []}}
+    png_idle = render_task_dag(dag, set(), set())
+    png_active = render_task_dag(dag, set(), {"t1"})
+    assert png_idle != png_active
+
+
+def test_task_dag_empty():
+    png = render_task_dag({}, set(), set())
+    assert isinstance(png, bytes)
+    assert len(png) > 0
