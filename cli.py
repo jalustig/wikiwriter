@@ -3,12 +3,11 @@
 
 import argparse
 import asyncio
-import difflib
-import re
 import sys
 
 from constants import STAGE_META
 from dag import dag_layers
+from diff_utils import section_diff_text
 from models import ContentGrade, EditorialEnvironment, ArticleAssessment
 from orchestrator import WikiWriterOrchestrator
 
@@ -124,11 +123,6 @@ def _print_sources(audit: list[dict], new_sources: list[dict]) -> None:
                 print(f"       {s['topic_coverage_summary']}")
 
 
-def _split_sentences(text: str) -> list[str]:
-    parts = re.split(r"(?<=[.!?])\s+", text.strip())
-    return [p for p in parts if p.strip()]
-
-
 def _print_diffs(section_drafts: list[dict]) -> None:
     _sep("Section Drafts")
     for draft in section_drafts:
@@ -138,16 +132,11 @@ def _print_diffs(section_drafts: list[dict]) -> None:
         for c in changes:
             print(f"    • {c}")
         orig, revised = draft["original_text"], draft["revised_text"]
-        if orig.strip() != revised.strip():
-            diff = difflib.unified_diff(
-                _split_sentences(orig),
-                _split_sentences(revised),
-                fromfile="original", tofile="revised",
-                lineterm="",
-            )
-            for line in list(diff)[2:]:
-                marker = line[0] if line else " "
-                print(f"    {marker} {line[1:]}")
+        if orig.strip() == revised.strip():
+            print("    (no text changes)")
+        else:
+            for ln in section_diff_text(orig, revised, width=_W - 6):
+                print(ln)
         for label, cites in (
             ("Citations added", draft.get("citations_added", [])),
             ("Citations removed", draft.get("citations_removed", [])),

@@ -15,6 +15,22 @@ _PROMPT = (Path(__file__).parent.parent / "prompts" / "critique_section.txt").re
 _MODEL = os.getenv("CRITIC_MODEL", "gpt-4o")
 
 
+def _build_critique_prompt(
+    article_title: str,
+    section_name: str,
+    original_text: str,
+    revised_text: str,
+    source_report: str,
+) -> str:
+    return _PROMPT.format(
+        article_title=article_title,
+        section_name=section_name,
+        original_text=original_text,
+        revised_text=revised_text,
+        source_report=source_report or "No sources available.",
+    )
+
+
 async def critique_section(
     article_title: str,
     section_name: str,
@@ -42,12 +58,8 @@ async def critique_section(
         cache.set(key, result.model_dump(), expire=3600)
         return result
 
-    prompt = _PROMPT.format(
-        article_title=article_title,
-        section_name=section_name,
-        original_text=original_text[:3000],
-        revised_text=revised_text[:3000],
-        source_report=source_report[:2000] or "No sources available.",
+    prompt = _build_critique_prompt(
+        article_title, section_name, original_text, revised_text, source_report
     )
 
     response = await _client.chat.completions.create(

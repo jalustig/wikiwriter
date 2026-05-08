@@ -1,8 +1,8 @@
 # ABOUTME: Tests for DraftWriter pure logic — no LLM calls.
 # ABOUTME: Tests source report assembly and diff generation.
 
-from models import SourceEvaluation
-from workers.draft_writer import _assemble_source_report, _build_diff
+from models import SectionPlan, SourceEvaluation
+from workers.draft_writer import _assemble_source_report, _build_diff, _draft_cache_key
 
 
 def _make_source(url, score, recommendation, topic_coverage_summary, status="LIVE"):
@@ -96,3 +96,23 @@ def test_build_diff_empty_original():
 def test_build_diff_empty_revised():
     result = _build_diff("Original content.", "")
     assert isinstance(result, str)
+
+
+# --- _draft_cache_key ---
+
+def test_draft_cache_key_differs_with_different_rationale():
+    url = "https://en.wikipedia.org/wiki/Texas"
+    sources = "some sources"
+    plan_a = SectionPlan(name="Lead", modes=["Expand"], rationale="Mode: Expand")
+    plan_b = SectionPlan(name="Lead", modes=["Expand"], rationale="Mode: Expand\nRevision notes: fix X")
+
+    assert _draft_cache_key(url, plan_a, sources) != _draft_cache_key(url, plan_b, sources)
+
+
+def test_draft_cache_key_same_for_identical_plans():
+    url = "https://en.wikipedia.org/wiki/Texas"
+    sources = "some sources"
+    plan_a = SectionPlan(name="Lead", modes=["Expand"], rationale="Mode: Expand")
+    plan_b = SectionPlan(name="Lead", modes=["Expand"], rationale="Mode: Expand")
+
+    assert _draft_cache_key(url, plan_a, sources) == _draft_cache_key(url, plan_b, sources)

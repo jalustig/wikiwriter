@@ -2,15 +2,14 @@
 # ABOUTME: Results (environment, grade, assessment, DAG, diffs, critique) appear as each stage completes.
 
 import asyncio
-import difflib
 import io
-import re
 
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 
 from constants import STAGE_META
 from dag import dag_layers
+from diff_utils import section_diff_html
 from models import (
     ContentGrade, EditorialEnvironment, ArticleAssessment,
     CritiqueResult, EditProposal,
@@ -23,34 +22,6 @@ VERDICT_COLORS = {
 }
 CLAIM_ICONS = {"cited": "✅", "undercited": "⚠️", "uncited": "❌", "consensus-uncited": "ℹ️"}
 
-_DIFF_CSS = """
-<style>
-table.diff {
-    font-family: ui-monospace, monospace;
-    font-size: 13px;
-    border-collapse: collapse;
-    width: 100%;
-    table-layout: fixed;
-}
-table.diff td, table.diff th {
-    padding: 3px 8px;
-    vertical-align: top;
-    word-break: break-word;
-    white-space: pre-wrap;
-    border: 1px solid #e0e0e0;
-}
-table.diff .diff_header { background: #f6f8fa; color: #555; font-size: 11px; width: 3em; }
-table.diff .diff_next   { background: #f6f8fa; width: 1.5em; }
-table.diff td.diff_add  { background: #e6ffec; }
-table.diff td.diff_chg  { background: #fff8c5; }
-table.diff td.diff_sub  { background: #ffeef0; }
-table.diff span.diff_add { background: #acf2bd; }
-table.diff span.diff_chg { background: #ffd33d; }
-table.diff span.diff_sub { background: #fdb8c0; text-decoration: line-through; }
-col.diff_header { width: 3em; }
-col.diff_next   { width: 1.5em; }
-</style>
-"""
 
 # ── DAG image renderer ─────────────────────────────────────────────────────────
 
@@ -213,20 +184,6 @@ def render_dag_panel(dag: dict, narrative: str) -> None:
     st.caption(narrative)
 
 
-def _split_sentences(text: str) -> list[str]:
-    parts = re.split(r"(?<=[.!?])\s+", text.strip())
-    return [p for p in parts if p.strip()]
-
-
-def _html_diff(original: str, revised: str) -> str:
-    d = difflib.HtmlDiff(wrapcolumn=72)
-    return _DIFF_CSS + d.make_table(
-        _split_sentences(original), _split_sentences(revised),
-        fromdesc="Original", todesc="Revised",
-        context=True, numlines=2,
-    )
-
-
 def render_section_diff(draft: dict) -> None:
     changes = draft.get("changes_made", [])
     header = f"**{draft['section_name']}**" + (f" — {changes[0]}" if changes else "")
@@ -239,7 +196,7 @@ def render_section_diff(draft: dict) -> None:
         if orig.strip() == revised.strip():
             st.write("_(no text changes)_")
         else:
-            st.html(_html_diff(orig, revised))
+            st.html(section_diff_html(orig, revised))
         for label, cites in (
             ("Citations added", draft.get("citations_added", [])),
             ("Citations removed", draft.get("citations_removed", [])),

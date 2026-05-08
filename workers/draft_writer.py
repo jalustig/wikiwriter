@@ -42,6 +42,12 @@ def _assemble_source_report(
     return "\n".join(lines)
 
 
+def _draft_cache_key(url: str, section_plan: "SectionPlan", source_report: str) -> str:
+    return "draft_writer:" + cache_key(
+        url, section_plan.name, source_report, section_plan.modes, section_plan.rationale
+    )
+
+
 def _build_diff(original: str, revised: str) -> str:
     """Return unified diff between original and revised text."""
     orig_lines = original.splitlines(keepends=True)
@@ -60,7 +66,7 @@ class DraftWriter:
     ) -> SectionDraft:
         section_text = article.section_texts.get(section_plan.name, "")
 
-        cache_ns = f"draft_writer:{cache_key(article.url, section_plan.name, source_report, section_plan.modes)}"  # noqa: E501
+        cache_ns = _draft_cache_key(article.url, section_plan, source_report)
         if cache_ns in cache:
             return SectionDraft.model_validate(cache[cache_ns])
 
