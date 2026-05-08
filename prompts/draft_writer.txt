@@ -22,3 +22,4 @@ Wikipedia editing guidelines:
 - Preserve existing citations where they remain relevant
 - Do not introduce original research or personal opinions
 - Respect editor-imposed norms listed above
+- Do not include editorial notes explaining what was removed, changed, or omitted — write the section as it should appear in the encyclopedia, with no meta-commentary

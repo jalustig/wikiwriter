@@ -32,6 +32,22 @@ from workers.output_grader import OutputGrader
 from workers.narrator import narrate
 
 
+def _inject_revision_notes(
+    nodes: dict,
+    critique: "CritiqueResult | None",
+) -> None:
+    """Inject critic suggested_fix into draft_section node params for revision cycles."""
+    if critique is None:
+        return
+    for node in nodes.values():
+        if node.type != "draft_section":
+            continue
+        section = node.params.get("section")
+        sr = critique.section_results.get(section)
+        if sr and sr.suggested_fix:
+            node.params["revision_notes"] = sr.suggested_fix
+
+
 def _think(stage: str, message: str) -> ProgressEvent:
     return ProgressEvent(stage=stage, status="thinking", message=message)
 
@@ -234,6 +250,9 @@ class WikiWriterOrchestrator:
                 nodes, narrative = await plan_edits(
                     article.title, assessment, feedback_critique
                 )
+
+            if cycle > 0:
+                _inject_revision_notes(nodes, final_critique)
 
             dag_display = format_dag_for_display(nodes, narrative)
             yield _think("PLAN", dag_display)
@@ -474,10 +493,14 @@ class WikiWriterOrchestrator:
         source_report = _assemble_source_report(audit, [], section_research_list)
 
         from models import SectionPlan
+        revision_notes = params.get("revision_notes", "")
+        rationale = f"Mode: {mode}"
+        if revision_notes:
+            rationale += f"\nRevision notes from critic: {revision_notes}"
         section_plan = SectionPlan(
             name=section_name,
             modes=[mode],
-            rationale=f"Mode: {mode}",
+            rationale=rationale,
         )
         return await self.draft_writer.run(
             section_plan=section_plan,
