@@ -10,6 +10,8 @@ class ProgressEvent(BaseModel):
     status: Literal["running", "done", "error", "thinking"]
     message: str
     data: dict | None = None
+    count: int | None = None   # current item in a batch
+    total: int | None = None   # total items in the batch
 
 
 class Citation(BaseModel):
