@@ -144,7 +144,7 @@ class WikiWriterOrchestrator:
             "n_sections": len(article.sections),
             "n_citations": len(article.citations),
             "sections": article.sections[:12],
-            "intro_text": next((v for k, v in article.section_texts.items() if not k), "")[:600],
+            "intro_text": next((v for k, v in article.section_texts.items() if not k), "")[:1200],
         }):
             yield t
         yield ProgressEvent(
@@ -184,12 +184,19 @@ class WikiWriterOrchestrator:
 
         async for t in _narrate("gather", {
             "article_title": article.title,
+            "article_topic": article_summary.topic,
+            "article_scope": article_summary.scope,
             "grade": content_grade.letter_grade,
             "score": content_grade.overall_score,
             "dimension_scores": content_grade.dimension_scores,
             "caution_level": environment.caution_level,
             "revert_rate": environment.revert_rate_12mo,
             "flip_flopped_sections": environment.flip_flopped_sections,
+            "active_disputes": environment.active_disputes,
+            "resolved_disputes": environment.resolved_disputes,
+            "active_topics": environment.active_topics,
+            "wikiproject_affiliations": environment.wikiproject_affiliations,
+            "environment_narrative": environment.environment_narrative,
             "policies": environment.policies_and_restrictions,
             "n_sources_usable": n_usable,
             "n_sources_dead": n_dead,
