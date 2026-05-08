@@ -175,7 +175,7 @@ def run_and_render(url: str) -> None:
         counter_ph = st.empty()
 
     # Render initial agent loop image (all pending)
-    loop_ph.image(render_agent_loop([], None, set(), 0), use_container_width=True)
+    loop_ph.image(render_agent_loop([], None, set(), 0), width="stretch")
 
     # ── Main tabs ──────────────────────────────────────────────────────────────
     tab_run, tab_debug = st.tabs(["▶ Run", "🔬 Debug"])
@@ -208,7 +208,7 @@ def run_and_render(url: str) -> None:
             state["done_stages"],
             state["loop_count"],
         )
-        loop_ph.image(png, use_container_width=True)
+        loop_ph.image(png, width="stretch")
 
     def _refresh_dag_image():
         if state["task_dag"]:
@@ -217,7 +217,7 @@ def run_and_render(url: str) -> None:
                 state["done_nodes"],
                 state["current_nodes"],
             )
-            dag_ph.image(png, use_container_width=True)
+            dag_ph.image(png, width="stretch")
 
     def _append_thought(stage: str, text: str):
         _, running_label, _ = STAGE_META.get(stage, ("•", stage, stage))
@@ -270,7 +270,7 @@ def run_and_render(url: str) -> None:
             if "dag" in acc and state["task_dag"]:
                 st.markdown("### Plan")
                 png = render_task_dag(state["task_dag"], set(), set())
-                st.image(png, use_container_width=True)
+                st.image(png, width="stretch")
                 st.caption(acc.get("dag_narrative", ""))
 
             if "section_drafts" in acc:
@@ -297,8 +297,10 @@ def run_and_render(url: str) -> None:
         async for event in WikiWriterOrchestrator().run(url):
             stage = event.stage
 
-            # Stage transition bookkeeping
-            if stage != state["current_stage"]:
+            # Stage transition bookkeeping — only on non-thinking events so that
+            # narrator thoughts (emitted with lowercase stage names) don't corrupt
+            # the canonical uppercase stage state used for the agent loop image.
+            if event.status != "thinking" and stage != state["current_stage"]:
                 if stage in state["done_stages"]:
                     state["loop_count"] += 1
                 state["current_stage"] = stage
@@ -306,7 +308,9 @@ def run_and_render(url: str) -> None:
                 _refresh_loop_image()
 
             if event.status == "thinking":
-                _append_thought(stage, f"*{event.message}*")
+                # Use the already-set current_stage for separator labels so we get
+                # the friendly STAGE_META label regardless of narrator's stage name.
+                _append_thought(state["current_stage"] or stage, f"*{event.message}*")
 
             elif event.status == "running":
                 if event.count is not None and event.total is not None:
