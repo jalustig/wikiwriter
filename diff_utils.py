@@ -134,10 +134,41 @@ def section_diff_html(original: str, revised: str) -> str:
 
 # ── CLI text rendering ──────────────────────────────────────────────────────────
 
-def paragraph_diff_text(old_para: str, new_para: str) -> tuple[str, str]:
-    """
-    Return (old_line, new_line) with [-deleted-] and {+inserted+} markers for terminal display.
-    """
+# ANSI color codes
+_RED = "\033[31m"
+_GREEN = "\033[32m"
+_GRAY = "\033[2m"       # dim for unchanged context
+_RESET = "\033[0m"
+_STRIKE = "\033[9m"     # strikethrough (widely supported)
+
+
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def _visible_len(s: str) -> int:
+    """String length ignoring ANSI escape sequences."""
+    return len(_ANSI_RE.sub("", s))
+
+
+def _colorize_markers(text: str) -> str:
+    """Replace [-...-] and {+...+} markers with ANSI color sequences."""
+    text = re.sub(
+        r'\[-(.+?)-\]',
+        lambda m: f"{_RED}{_STRIKE}{m.group(1)}{_RESET}",
+        text,
+        flags=re.DOTALL,
+    )
+    text = re.sub(
+        r'\{\+(.+?)\+\}',
+        lambda m: f"{_GREEN}{m.group(1)}{_RESET}",
+        text,
+        flags=re.DOTALL,
+    )
+    return text
+
+
+def _paragraph_diff_markers(old_para: str, new_para: str) -> tuple[str, str]:
+    """Return (old_marked, new_marked) with [-del-] / {+ins+} plain-text markers."""
     if not old_para:
         return "", "{+" + new_para + "+}"
     if not new_para:
@@ -156,31 +187,73 @@ def paragraph_diff_text(old_para: str, new_para: str) -> tuple[str, str]:
     return " ".join(old_parts), " ".join(new_parts)
 
 
-def section_diff_text(original: str, revised: str, width: int = 68) -> list[str]:
+def section_diff_text(original: str, revised: str, width: int = 68,
+                      color: bool = False) -> list[str]:
     """
     Return lines for terminal display: paragraph by paragraph, original above revised.
-    Unchanged paragraphs are shown once with no markers. Changed paragraphs show
-    [-deleted-] and {+inserted+} word markers, word-wrapped to `width`.
+
+    Unchanged paragraphs are shown once (dimmed when color=True).
+    Changed paragraphs show [-deleted-] / {+inserted+} markers, word-wrapped to `width`.
+    With color=True, markers are replaced by ANSI red-strikethrough / green highlights.
+    Word-wrap is computed on plain text so column widths stay accurate.
     """
     orig_paras = split_paragraphs(original)
     rev_paras = split_paragraphs(revised)
     lines = []
 
-    def _wrap(text: str, prefix: str = "  ") -> list[str]:
-        """Word-wrap `text` to `width`, indenting continuation lines to match prefix."""
+    measure = _visible_len if color else len
+
+    def _wrap(text: str, plain_prefix: str, display_prefix: str) -> list[str]:
+        """
+        Word-wrap `text` (which may contain ANSI codes) to `width`.
+        plain_prefix is used for width accounting; display_prefix is what's printed.
+        Continuation lines are indented to the same visible width as plain_prefix.
+        """
         if not text:
             return []
-        indent = " " * len(prefix)
-        out, current = [], prefix
+        indent = " " * len(plain_prefix)
+        out, current_plain, current_display = [], plain_prefix, display_prefix
         for word in text.split():
-            if current != prefix and len(current) + 1 + len(word) > width:
-                out.append(current)
-                current = indent + word
+            word_vis = measure(word)
+            if current_plain != plain_prefix and measure(current_plain) + 1 + word_vis > width:
+                out.append(current_display)
+                current_plain = indent + _ANSI_RE.sub("", word) if color else indent + word
+                current_display = indent + word
             else:
-                current = current + (" " if current != prefix else "") + word
-        if current.strip():
-            out.append(current)
+                sep = "" if current_plain == plain_prefix else " "
+                current_plain += sep + (_ANSI_RE.sub("", word) if color else word)
+                current_display += sep + word
+        if _visible_len(current_display.strip()):
+            out.append(current_display)
         return out
+
+    def _emit_equal(para: str) -> None:
+        display = f"{_GRAY}{para}{_RESET}" if color else para
+        wrapped = _wrap(display, "  ", "  ")
+        lines.extend(wrapped)
+        lines.append("")
+
+    def _emit_pair(old_para: str, new_para: str) -> None:
+        old_marked, new_marked = _paragraph_diff_markers(old_para, new_para)
+        if old_marked:
+            plain_pfx = "  ← "   # "  ← "
+            if color:
+                text = _colorize_markers(old_marked)
+                disp_pfx = f"  {_RED}←{_RESET} "
+            else:
+                text = old_marked
+                disp_pfx = plain_pfx
+            lines.extend(_wrap(text, plain_pfx, disp_pfx))
+        if new_marked:
+            plain_pfx = "  → "   # "  → "
+            if color:
+                text = _colorize_markers(new_marked)
+                disp_pfx = f"  {_GREEN}→{_RESET} "
+            else:
+                text = new_marked
+                disp_pfx = plain_pfx
+            lines.extend(_wrap(text, plain_pfx, disp_pfx))
+        lines.append("")
 
     if not orig_paras and not rev_paras:
         return ["  (empty)"]
@@ -189,26 +262,18 @@ def section_diff_text(original: str, revised: str, width: int = 68) -> list[str]
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             for p in orig_paras[i1:i2]:
-                lines.extend(_wrap(p, "  "))
-                lines.append("")
+                _emit_equal(p)
         elif tag == "replace":
-            old_ps = orig_paras[i1:i2]
-            new_ps = rev_paras[j1:j2]
+            old_ps, new_ps = orig_paras[i1:i2], rev_paras[j1:j2]
             for i in range(max(len(old_ps), len(new_ps))):
-                op = old_ps[i] if i < len(old_ps) else ""
-                np = new_ps[i] if i < len(new_ps) else ""
-                old_marked, new_marked = paragraph_diff_text(op, np)
-                if old_marked:
-                    lines.extend(_wrap(old_marked, "  ← "))
-                if new_marked:
-                    lines.extend(_wrap(new_marked, "  → "))
-                lines.append("")
+                _emit_pair(
+                    old_ps[i] if i < len(old_ps) else "",
+                    new_ps[i] if i < len(new_ps) else "",
+                )
         elif tag == "delete":
             for p in orig_paras[i1:i2]:
-                lines.extend(_wrap(p, "  ← "))
-                lines.append("")
+                _emit_pair(p, "")
         elif tag == "insert":
             for p in rev_paras[j1:j2]:
-                lines.extend(_wrap(p, "  → "))
-                lines.append("")
+                _emit_pair("", p)
     return lines

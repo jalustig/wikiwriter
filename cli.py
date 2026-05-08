@@ -135,7 +135,7 @@ def _print_diffs(section_drafts: list[dict]) -> None:
         if orig.strip() == revised.strip():
             print("    (no text changes)")
         else:
-            for ln in section_diff_text(orig, revised, width=_W - 6):
+            for ln in section_diff_text(orig, revised, width=_W - 6, color=True):
                 print(ln)
         for label, cites in (
             ("Citations added", draft.get("citations_added", [])),
