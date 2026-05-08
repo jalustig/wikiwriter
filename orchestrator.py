@@ -52,6 +52,13 @@ def _think(stage: str, message: str) -> ProgressEvent:
     return ProgressEvent(stage=stage, status="thinking", message=message)
 
 
+async def _narrate(stage: str, context: dict):
+    """Yield a stream of thinking ProgressEvents from the narrator."""
+    thoughts = await narrate(stage, context)
+    for thought in thoughts:
+        yield _think(stage, thought)
+
+
 def _assemble_source_report(
     audit: list[SourceEvaluation],
     new_sources: list[SourceEvaluation],
@@ -131,16 +138,15 @@ class WikiWriterOrchestrator:
         # ── FETCH ─────────────────────────────────────────────────────────────
         yield ProgressEvent(stage="FETCH", status="running", message=f"Fetching {url}...")
         article = await fetch_article(url)
-        thought = await narrate("fetch", {
+        async for t in _narrate("fetch", {
             "article_title": article.title,
             "assessment_class": article.assessment_class or "unrated",
             "n_sections": len(article.sections),
             "n_citations": len(article.citations),
             "sections": article.sections[:12],
             "intro_text": next((v for k, v in article.section_texts.items() if not k), "")[:600],
-        })
-        if thought:
-            yield _think("FETCH", thought)
+        }):
+            yield t
         yield ProgressEvent(
             stage="FETCH", status="done",
             message=(
@@ -154,11 +160,10 @@ class WikiWriterOrchestrator:
 
         # summarize_article must run first
         article_summary = await summarize_article(article)
-        yield _think("GATHER", f"Topic: {article_summary.topic[:120]}")
 
         # Now all parallel tasks
         n_cit = min(len(article.citations), 20)
-        yield _think("GATHER", f"Grading article, reading editorial history, evaluating {n_cit} citations...")
+        yield _think("GATHER", f"Checking {n_cit} citations, grading content, reading talk page...")
 
         async def _eval_source(citation):
             return await self.source_evaluator.evaluate(citation.url, article_summary)
@@ -176,6 +181,21 @@ class WikiWriterOrchestrator:
 
         n_usable = sum(1 for s in source_evals if s.recommendation == "USE")
         n_dead = sum(1 for s in source_evals if s.status == "DEAD")
+
+        async for t in _narrate("gather", {
+            "article_title": article.title,
+            "grade": content_grade.letter_grade,
+            "score": content_grade.overall_score,
+            "dimension_scores": content_grade.dimension_scores,
+            "caution_level": environment.caution_level,
+            "revert_rate": environment.revert_rate_12mo,
+            "flip_flopped_sections": environment.flip_flopped_sections,
+            "policies": environment.policies_and_restrictions,
+            "n_sources_usable": n_usable,
+            "n_sources_dead": n_dead,
+            "n_sources_total": len(source_evals),
+        }):
+            yield t
 
         yield ProgressEvent(
             stage="GATHER", status="done",
@@ -197,12 +217,20 @@ class WikiWriterOrchestrator:
             article, article_summary, content_grade, environment, source_evals
         )
         sections_to_edit = [s for s in assessment.sections if s.action == "EDIT"]
-        thought = (
-            f"{assessment.importance.tier} article — {assessment.article_class}. "
-            f"Editing {len(sections_to_edit)} sections. "
-            f"Effort: {assessment.effort_ceiling}."
-        )
-        yield _think("ASSESS", thought)
+        async for t in _narrate("assess", {
+            "article_title": article.title,
+            "importance": assessment.importance.tier,
+            "article_class": assessment.article_class,
+            "effort_ceiling": assessment.effort_ceiling,
+            "edit_rationale": assessment.edit_rationale,
+            "primary_weaknesses": assessment.primary_weaknesses,
+            "sections_to_edit": [
+                {"name": s.name, "edit_type": s.edit_type, "rationale": s.rationale}
+                for s in sections_to_edit
+            ],
+            "sections_skipped": [s.name for s in assessment.sections if s.action == "SKIP"],
+        }):
+            yield t
         yield ProgressEvent(
             stage="ASSESS", status="done",
             message=f"{assessment.importance.tier} | {assessment.article_class} | "
@@ -237,7 +265,7 @@ class WikiWriterOrchestrator:
             # Validate the plan
             approved, feedback = await validate_plan(article.title, assessment, nodes)
             if not approved and cycle == 0:
-                yield _think("PLAN", f"Plan needs revision: {feedback}")
+                yield _think("PLAN", f"Validator flagged this plan: {feedback}")
                 # One retry with feedback appended
                 if critique_for_planner is None:
                     from models import CritiqueResult as CR
@@ -256,6 +284,17 @@ class WikiWriterOrchestrator:
 
             dag_display = format_dag_for_display(nodes, narrative)
             yield _think("PLAN", dag_display)
+            async for t in _narrate("plan", {
+                "article_title": article.title,
+                "cycle": cycle,
+                "n_tasks": len(nodes),
+                "narrative": narrative,
+                "tasks": [
+                    {"id": nid, "type": n.type, "params": n.params}
+                    for nid, n in nodes.items()
+                ],
+            }):
+                yield t
             yield ProgressEvent(
                 stage="PLAN", status="done",
                 message=f"{len(nodes)} tasks planned{cycle_label}",
@@ -300,19 +339,30 @@ class WikiWriterOrchestrator:
                             section_research_map[sr.section_name] = sr
                             n_claims = len([c for c in sr.claim_map.claims
                                            if c.status in ("uncited", "undercited")])
-                            yield _think("EXEC", (
-                                f"research_section({sr.section_name}): "
-                                f"{n_claims} uncited claims, "
-                                f"{len(sr.new_sources)} new sources found"
-                            ))
+                            async for t in _narrate("exec_research", {
+                                "section": sr.section_name,
+                                "n_uncited_claims": n_claims,
+                                "uncited_claims": [
+                                    c.text[:120] for c in sr.claim_map.claims
+                                    if c.status in ("uncited", "undercited")
+                                ][:4],
+                                "n_new_sources": len(sr.new_sources),
+                                "new_source_summaries": [
+                                    s.topic_coverage_summary for s in sr.new_sources[:3]
+                                ],
+                            }):
+                                yield t
                         elif node.type == "draft_section":
                             sd: SectionDraft = node.result
                             section_draft_map[sd.section_name] = sd
-                            changes = sd.changes_made[:2] if sd.changes_made else ["revised"]
-                            yield _think("EXEC", (
-                                f"draft_section({sd.section_name}): "
-                                + "; ".join(changes)
-                            ))
+                            async for t in _narrate("exec_draft", {
+                                "section": sd.section_name,
+                                "changes_made": sd.changes_made[:4],
+                                "citations_added": sd.citations_added[:3],
+                                "citations_removed": sd.citations_removed[:3],
+                                "text_changed": sd.original_text.strip() != sd.revised_text.strip(),
+                            }):
+                                yield t
                         elif node.type == "synthesize":
                             synthesized = node.result
                 elif dag_event.status == "error":
@@ -358,15 +408,23 @@ class WikiWriterOrchestrator:
                 r for r in section_critique_results if isinstance(r, SectionCritiqueResult)
             ]
 
-            for r in section_critique_results:
-                icon = "✓" if r.verdict == "PASS" else "✗"
-                yield _think("CRITIQUE", f"{icon} {r.section_name}: {r.verdict}")
-                if r.issues:
-                    yield _think("CRITIQUE", f"  Issues: {'; '.join(r.issues[:2])}")
-
             final_critique = await aggregate_critique(
                 article.title, section_critique_results, cycle
             )
+
+            async for t in _narrate("critique", {
+                "article_title": article.title,
+                "cycle": cycle,
+                "overall_verdict": final_critique.overall_verdict,
+                "passing_sections": final_critique.passing_sections,
+                "failing_sections": final_critique.failing_sections,
+                "section_issues": {
+                    r.section_name: r.issues[:2]
+                    for r in section_critique_results if r.issues
+                },
+                "revision_instructions": final_critique.revision_instructions[:3],
+            }):
+                yield t
 
             yield ProgressEvent(
                 stage="CRITIQUE", status="done",
@@ -386,10 +444,11 @@ class WikiWriterOrchestrator:
             if verdict in ("PASS", "PARTIAL_ACCEPT"):
                 # On PARTIAL_ACCEPT: use passing sections only
                 if verdict == "PARTIAL_ACCEPT" and final_critique.failing_sections:
-                    yield _think("CRITIQUE", (
-                        f"Partial accept: keeping {len(final_critique.passing_sections)} sections, "
-                        f"reverting {len(final_critique.failing_sections)} to original"
-                    ))
+                    yield _think(
+                        "CRITIQUE",
+                        f"Keeping {len(final_critique.passing_sections)} sections, "
+                        f"reverting {len(final_critique.failing_sections)} that didn't pass.",
+                    )
                     # Revert failing sections to original
                     filtered = [
                         d for d in all_section_drafts
