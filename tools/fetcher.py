@@ -100,44 +100,24 @@ async def fetch_raw(url: str) -> tuple[str, str]:
         return content_type, resp.text
 
 
-async def _fetch_oa_version(url: str) -> str | None:
-    """Return an open-access URL for the given DOI via Unpaywall, or None."""
-    doi = _extract_doi(url)
-    if not doi:
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=10, headers=_HEADERS) as client:
-            resp = await client.get(
-                f"https://api.unpaywall.org/v2/{doi}",
-                params={"email": "wikiwriter@wikiwriter.app"},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("is_oa"):
-                    best = data.get("best_oa_location") or {}
-                    return best.get("url_for_pdf") or best.get("url")
-    except Exception:
-        pass
-    return None
-
-
 @cached("page_text", ttl=7 * 24 * 3600)
 async def fetch_readable(url: str) -> str:
     """
     Fetch URL and return clean readable text, max 8000 chars.
-    For DOI URLs, tries Unpaywall first for an open-access version.
-    Detects PDF by content-type and routes to tools/pdf.py.
-    Falls back to Playwright if httpx gets blocked (403/429 or short body).
-    If Playwright also returns a CAPTCHA page, falls back to Wayback Machine.
-    Falls back to Wayback Machine if httpx fails entirely.
+    For DOI URLs: checks local paper storage first, then fetches the landing page and
+    searches for an open-access PDF via citation metadata, Unpaywall, Semantic Scholar,
+    and page link scanning. Falls back to readable text from the landing page.
+    For non-DOI URLs: falls back to Playwright if httpx gets blocked (403/429 or short
+    body), then to the Wayback Machine if all else fails.
     """
-    # For academic DOIs, try to get an open-access version first
-    oa_url = await _fetch_oa_version(url)
-    if oa_url:
-        try:
-            return await fetch_readable(oa_url)
-        except Exception:
-            pass  # fall through to normal fetch of original URL
+    doi = _extract_doi(url)
+
+    # Fast path: already downloaded this paper locally
+    if doi:
+        from tools.academic import local_pdf
+        if path := local_pdf(doi):
+            from tools.pdf import extract_pdf_text
+            return await extract_pdf_text(path)
 
     html = None
     content_type = "text/html"
@@ -181,5 +161,12 @@ async def fetch_readable(url: str) -> str:
     if is_pdf:
         from tools.pdf import extract_pdf_text
         return await extract_pdf_text(url)
+
+    # For DOI URLs, search the landing page for an open-access PDF
+    if doi and html:
+        from tools.academic import find_oa_pdf
+        if pdf_path := await find_oa_pdf(doi, html, url):
+            from tools.pdf import extract_pdf_text
+            return await extract_pdf_text(pdf_path)
 
     return _html_to_text(html or "")
