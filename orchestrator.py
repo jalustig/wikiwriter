@@ -168,15 +168,25 @@ class WikiWriterOrchestrator:
         async def _eval_source(citation):
             return await self.source_evaluator.evaluate(citation.url, article_summary)
 
+        citations_to_eval = article.citations[:20]
         grade_task = asyncio.create_task(self.grader.run(article))
         env_task = asyncio.create_task(self.env_analyzer.run(article))
         source_tasks = [
             asyncio.create_task(_eval_source(c))
-            for c in article.citations[:20]
+            for c in citations_to_eval
         ]
 
         content_grade, environment = await asyncio.gather(grade_task, env_task)
-        source_results = await asyncio.gather(*source_tasks, return_exceptions=True)
+
+        source_results = []
+        for i, task in enumerate(asyncio.as_completed(source_tasks), start=1):
+            result = await task
+            source_results.append(result)
+            yield ProgressEvent(
+                stage="GATHER", status="running",
+                message="Evaluating sources",
+                count=i, total=len(citations_to_eval),
+            )
         source_evals = [r for r in source_results if isinstance(r, SourceEvaluation)]
 
         n_usable = sum(1 for s in source_evals if s.recommendation == "USE")
