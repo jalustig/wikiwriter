@@ -5,7 +5,7 @@ import random
 import httpx
 from bs4 import BeautifulSoup
 
-from cache import cached, record_tool_call
+from cache import cache, cache_key, record_tool_call
 from tools.wayback import get_archive_url
 
 _MIN_BODY_CHARS = 200
@@ -90,18 +90,20 @@ def _html_to_text(html: str) -> str:
     return soup.get_text(separator="\n", strip=True)[:8000]
 
 
-@cached("page_fetch", ttl=7 * 24 * 3600)
 async def fetch_raw(url: str) -> tuple[str, str]:
     """Returns (content_type, raw_content). Raises on HTTP error."""
-    record_tool_call("fetch")
+    _key = f"page_fetch:{cache_key(url)}"
+    if _key in cache:
+        return cache[_key]
     async with httpx.AsyncClient(follow_redirects=True, timeout=15, headers=_HEADERS) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "").split(";")[0].strip()
-        return content_type, resp.text
+        result = content_type, resp.text
+    cache.set(_key, result, expire=7 * 24 * 3600)
+    return result
 
 
-@cached("page_text", ttl=7 * 24 * 3600)
 async def fetch_readable(url: str) -> str:
     """
     Fetch URL and return clean readable text, max 8000 chars.
@@ -111,6 +113,11 @@ async def fetch_readable(url: str) -> str:
     For non-DOI URLs: falls back to Playwright if httpx gets blocked (403/429 or short
     body), then to the Wayback Machine if all else fails.
     """
+    _key = f"page_text:{cache_key(url)}"
+    record_tool_call("fetch")
+    if _key in cache:
+        return cache[_key]
+
     doi = _extract_doi(url)
 
     # Fast path: already downloaded this paper locally
@@ -168,6 +175,10 @@ async def fetch_readable(url: str) -> str:
         from tools.academic import find_oa_pdf
         if pdf_path := await find_oa_pdf(doi, html, url):
             from tools.pdf import extract_pdf_text
-            return await extract_pdf_text(pdf_path)
+            result = await extract_pdf_text(pdf_path)
+            cache.set(_key, result, expire=7 * 24 * 3600)
+            return result
 
-    return _html_to_text(html or "")
+    result = _html_to_text(html or "")
+    cache.set(_key, result, expire=7 * 24 * 3600)
+    return result

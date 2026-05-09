@@ -95,10 +95,10 @@ async def fetch_article(url: str) -> WikiArticle:
     Uses wikipedia-api for clean section text; prop=extlinks for comprehensive citation URLs.
     """
     cache_ns = f"article_v2:{cache_key(url)}"
+    record_tool_call("wikipedia")
     if cache_ns in cache:
         return WikiArticle.model_validate(cache[cache_ns])
 
-    record_tool_call("wikipedia")
     title = _title_from_url(url)
 
     # Fetch wikitext (for citations) and extlinks (all external URLs) in parallel
@@ -155,10 +155,9 @@ async def fetch_article(url: str) -> WikiArticle:
 async def fetch_edit_history(title: str) -> list[dict]:
     """Fetch the last 500 edits for an article via MediaWiki API."""
     cache_ns = f"edit_history:{cache_key(title)}"
+    record_tool_call("wikipedia")
     if cache_ns in cache:
         return cache[cache_ns]
-
-    record_tool_call("wikipedia")
     async with httpx.AsyncClient(headers=HEADERS, timeout=30) as client:
         resp = await client.get(MEDIAWIKI_API, params={
             "action": "query", "titles": title,
@@ -176,10 +175,9 @@ async def fetch_edit_history(title: str) -> list[dict]:
 async def fetch_talk_page(title: str) -> str:
     """Fetch talk page wikitext, including up to 5 archive pages."""
     cache_ns = f"talk_page:{cache_key(title)}"
+    record_tool_call("wikipedia")
     if cache_ns in cache:
         return cache[cache_ns]
-
-    record_tool_call("wikipedia")
     talk_title = f"Talk:{title}"
     page_titles = [talk_title] + [f"{talk_title}/Archive {n}" for n in range(1, 6)]
     texts: list[str] = []

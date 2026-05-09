@@ -9,9 +9,9 @@ from cache import cache_key, cache, record_tool_call
 async def get_archive_url(url: str) -> str | None:
     """Return newest Wayback Machine snapshot URL for a dead URL, or None."""
     key = f"wayback:{cache_key(url)}"
+    record_tool_call("wayback")
     if key in cache:
         return cache[key]
-    record_tool_call("wayback")
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, _wayback_lookup_sync, url)
     cache.set(key, result, expire=7 * 24 * 3600)
