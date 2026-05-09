@@ -182,8 +182,11 @@ class WikiWriterOrchestrator:
         n_cit = min(len(article.citations), 20)
         yield _think("GATHER", f"Checking {n_cit} citations, grading content, reading talk page...")
 
+        _source_sem = asyncio.Semaphore(5)
+
         async def _eval_source(citation):
-            return await self.source_evaluator.evaluate(citation.url, article_summary)
+            async with _source_sem:
+                return await self.source_evaluator.evaluate(citation.url, article_summary)
 
         citations_to_eval = article.citations[:20]
         grade_task = asyncio.create_task(self.grader.run(article))

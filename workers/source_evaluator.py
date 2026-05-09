@@ -1,6 +1,7 @@
 # ABOUTME: Evaluates any URL as a potential Wikipedia source on 5 quality dimensions.
 # ABOUTME: Used by both citation audit (existing sources) and research_section (new candidates).
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -83,11 +84,19 @@ class SourceEvaluator:
             page_text=page_text[:6000],
         )
 
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-        )
+        for attempt in range(3):
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    timeout=60.0,
+                )
+                break
+            except openai.APITimeoutError:
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(2 ** attempt)
         record_llm_call(response.usage)
 
         data = json.loads(response.choices[0].message.content)
