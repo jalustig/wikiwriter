@@ -7,26 +7,47 @@ from PIL import Image, ImageDraw, ImageFont
 
 from dag import dag_layers
 
-STAGES = ["FETCH", "GATHER", "ASSESS", "PLAN", "EXEC", "CRITIQUE", "GRADE"]
-_INITIAL_STAGES = ["FETCH", "GATHER", "ASSESS"]
-_DECISION_NODE = "???"
+# Pipeline layout: each entry is either a single stage name or a list of parallel stages.
+# The GATHER fan-out is represented as ["CHECK_SOURCES", "GRADE_CONTENT", "REVIEW_CONTEXT"].
+_PIPELINE_ROWS = [
+    "FETCH",
+    ["CHECK_SOURCES", "GRADE_CONTENT", "REVIEW_CONTEXT"],
+    "ASSESS",
+    "PLAN",
+    "EXEC",
+    "CRITIQUE",
+    "GRADE",
+]
+
+# Canonical stage names used for status tracking (map parallel sub-stages to GATHER)
+_GATHER_SUBSTAGES = {"CHECK_SOURCES", "GRADE_CONTENT", "REVIEW_CONTEXT"}
 
 _STAGE_LABELS = {
-    "FETCH":    "Fetch",
-    "GATHER":   "Gather",
-    "ASSESS":   "Assess",
-    "PLAN":     "Plan",
-    "EXEC":     "Execute",
-    "CRITIQUE": "Critique",
-    "GRADE":    "Grade",
-    _DECISION_NODE: "???",
+    "FETCH":          "Read Article",
+    "CHECK_SOURCES":  "Check Sources",
+    "GRADE_CONTENT":  "Grade Content",
+    "REVIEW_CONTEXT": "Review Context",
+    "ASSESS":         "Assess",
+    "PLAN":           "Plan",
+    "EXEC":           "Execute",
+    "CRITIQUE":       "Critique",
+    "GRADE":          "Grade",
+    "???":            "???",
 }
+
+# Initial rows shown before ASSESS completes (progressive reveal)
+_INITIAL_ROWS = [
+    "FETCH",
+    ["CHECK_SOURCES", "GRADE_CONTENT", "REVIEW_CONTEXT"],
+    "???",
+]
 
 _NODE_COLORS = {
     "done":    ("#DCFCE7", "#16A34A", 2),
     "active":  ("#DBEAFE", "#3B82F6", 3),
     "error":   ("#FEE2E2", "#DC2626", 2),
     "pending": ("#F1F5F9", "#CBD5E1", 1),
+    "decision": ("#FEF9C3", "#CA8A04", 1),
 }
 
 _TYPE_COLORS = {
@@ -50,6 +71,18 @@ def _fonts():
         return f, f, f
 
 
+def _node_color(stage: str, current_stage: str | None, done_stages: set) -> tuple:
+    if stage == "???":
+        return _NODE_COLORS["decision"]
+    # Sub-stages of GATHER inherit GATHER's status
+    effective = "GATHER" if stage in _GATHER_SUBSTAGES else stage
+    if effective == current_stage or stage == current_stage:
+        return _NODE_COLORS["active"]
+    if effective in done_stages or stage in done_stages:
+        return _NODE_COLORS["done"]
+    return _NODE_COLORS["pending"]
+
+
 def render_agent_loop(
     stage_history: list,
     current_stage,
@@ -58,44 +91,80 @@ def render_agent_loop(
     width: int = 210,
 ) -> bytes:
     """Render the agent loop diagram as PNG bytes for st.image()."""
-    # Progressive reveal: show full pipeline only after ASSESS is done
-    visible = STAGES if "ASSESS" in done_stages else _INITIAL_STAGES + [_DECISION_NODE]
+    rows = _PIPELINE_ROWS if "ASSESS" in done_stages else _INITIAL_ROWS
 
-    NW = width - 20
-    NH = 34
+    NW = width - 20   # node width
+    NH = 32           # node height
     PAD = 10
-    VG = 14
-    n = len(visible)
+    VG = 12           # vertical gap between rows
+    HG = 6            # horizontal gap between parallel nodes
+
+    f_label, _, f_small = _fonts()
+
+    # Compute row heights and total height
+    n_rows = len(rows)
     back_edge_extra = 40 if loop_count > 0 and "ASSESS" in done_stages else 0
-    H = PAD + n * NH + (n - 1) * VG + PAD + back_edge_extra
+    H = PAD + n_rows * NH + (n_rows - 1) * VG + PAD + back_edge_extra
 
     img = Image.new("RGB", (width, H), "#FFFFFF")
     draw = ImageDraw.Draw(img)
-    f_label, _, f_small = _fonts()
 
-    cx = PAD + NW // 2
-    positions = {}
-    for i, stage in enumerate(visible):
-        cy = PAD + i * (NH + VG) + NH // 2
-        positions[stage] = (cx, cy)
+    cx_center = PAD + NW // 2
 
-    # Draw forward edges
-    for i in range(len(visible) - 1):
-        s1, s2 = visible[i], visible[i + 1]
-        _, y1 = positions[s1]
-        _, y2 = positions[s2]
-        mid_y1 = y1 + NH // 2
-        mid_y2 = y2 - NH // 2
-        draw.line([(cx, mid_y1), (cx, mid_y2 - 4)], fill="#94A3B8", width=1)
-        draw.polygon(
-            [(cx - 4, mid_y2 - 7), (cx + 4, mid_y2 - 7), (cx, mid_y2)],
-            fill="#94A3B8",
-        )
+    # Compute center positions for each node in each row
+    # pos maps stage_name -> (cx, cy)
+    pos: dict[str, tuple[int, int]] = {}
+    row_cy: list[int] = []
 
-    # Draw back-edge if loop occurred (CRITIQUE → PLAN) — only when full pipeline is visible
-    if loop_count > 0 and "PLAN" in positions and "CRITIQUE" in positions:
-        _, plan_cy = positions["PLAN"]
-        _, crit_cy = positions["CRITIQUE"]
+    for ri, row in enumerate(rows):
+        cy = PAD + ri * (NH + VG) + NH // 2
+        row_cy.append(cy)
+        if isinstance(row, str):
+            pos[row] = (cx_center, cy)
+        else:
+            # Parallel nodes: divide available width evenly
+            n = len(row)
+            sub_w = (NW - (n - 1) * HG) // n
+            for i, stage in enumerate(row):
+                node_cx = PAD + i * (sub_w + HG) + sub_w // 2
+                pos[stage] = (node_cx, cy)
+
+    # ── Draw edges ────────────────────────────────────────────────────────────
+    for ri in range(len(rows) - 1):
+        top_row = rows[ri]
+        bot_row = rows[ri + 1]
+
+        top_stages = [top_row] if isinstance(top_row, str) else top_row
+        bot_stages = [bot_row] if isinstance(bot_row, str) else bot_row
+
+        top_cxs = [pos[s][0] for s in top_stages]
+        bot_cxs = [pos[s][0] for s in bot_stages]
+
+        top_cy = row_cy[ri] + NH // 2
+        bot_cy = row_cy[ri + 1] - NH // 2
+
+        if len(top_stages) == 1 and len(bot_stages) == 1:
+            # Simple vertical connector
+            _draw_arrow(draw, top_cxs[0], top_cy, bot_cxs[0], bot_cy)
+        elif len(top_stages) == 1:
+            # Fan-out: one top node to many bottom nodes
+            mid_y = (top_cy + bot_cy) // 2
+            draw.line([(top_cxs[0], top_cy), (top_cxs[0], mid_y)], fill="#94A3B8", width=1)
+            for bcx in bot_cxs:
+                draw.line([(top_cxs[0], mid_y), (bcx, mid_y)], fill="#94A3B8", width=1)
+                _draw_arrow(draw, bcx, mid_y, bcx, bot_cy)
+        else:
+            # Fan-in: many top nodes to one bottom node
+            mid_y = (top_cy + bot_cy) // 2
+            for tcx in top_cxs:
+                draw.line([(tcx, top_cy), (tcx, mid_y)], fill="#94A3B8", width=1)
+            draw.line([(top_cxs[0], mid_y), (top_cxs[-1], mid_y)], fill="#94A3B8", width=1)
+            _draw_arrow(draw, bot_cxs[0], mid_y, bot_cxs[0], bot_cy)
+
+    # ── Back-edge if loop occurred (CRITIQUE → PLAN) ──────────────────────────
+    if loop_count > 0 and "PLAN" in pos and "CRITIQUE" in pos:
+        _, plan_cy = pos["PLAN"]
+        _, crit_cy = pos["CRITIQUE"]
         right_x = PAD + NW + 4
         pts = [
             (PAD + NW, crit_cy),
@@ -115,32 +184,38 @@ def render_agent_loop(
             label, fill="#DC2626", font=f_small,
         )
 
-    # Draw nodes
-    for stage in visible:
-        cx_node, cy_node = positions[stage]
-        x0 = PAD
-        y0 = cy_node - NH // 2
-        x1 = PAD + NW
-        y1 = cy_node + NH // 2
+    # ── Draw nodes ────────────────────────────────────────────────────────────
+    for ri, row in enumerate(rows):
+        stages = [row] if isinstance(row, str) else row
+        n = len(stages)
+        sub_w = (NW - (n - 1) * HG) // n if n > 1 else NW
 
-        if stage == _DECISION_NODE:
-            fill, border, bw = "#FEF9C3", "#CA8A04", 1
-        elif stage == current_stage:
-            fill, border, bw = _NODE_COLORS["active"]
-        elif stage in done_stages:
-            fill, border, bw = _NODE_COLORS["done"]
-        else:
-            fill, border, bw = _NODE_COLORS["pending"]
+        for i, stage in enumerate(stages):
+            node_cx, node_cy = pos[stage]
+            x0 = node_cx - sub_w // 2
+            y0 = node_cy - NH // 2
+            x1 = node_cx + sub_w // 2
+            y1 = node_cy + NH // 2
 
-        draw.rounded_rectangle([x0, y0, x1, y1], radius=6, fill=fill, outline=border, width=bw)
+            fill, border, bw = _node_color(stage, current_stage, done_stages)
+            draw.rounded_rectangle([x0, y0, x1, y1], radius=6, fill=fill, outline=border, width=bw)
 
-        label = _STAGE_LABELS.get(stage, stage)
-        text_color = "#CA8A04" if stage == _DECISION_NODE else "#1E293B"
-        draw.text((cx_node, cy_node), label, fill=text_color, anchor="mm", font=f_label)
+            label = _STAGE_LABELS.get(stage, stage)
+            text_color = "#CA8A04" if stage == "???" else "#1E293B"
+            draw.text((node_cx, node_cy), label, fill=text_color, anchor="mm", font=f_label)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _draw_arrow(draw, x1: int, y1: int, x2: int, y2: int) -> None:
+    """Draw a vertical downward arrow from (x1,y1) to (x2,y2)."""
+    draw.line([(x1, y1), (x2, y2 - 4)], fill="#94A3B8", width=1)
+    draw.polygon(
+        [(x2 - 4, y2 - 7), (x2 + 4, y2 - 7), (x2, y2)],
+        fill="#94A3B8",
+    )
 
 
 def render_task_dag(

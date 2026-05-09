@@ -13,6 +13,7 @@ CACHE_DIR = os.getenv("CACHE_DIR", ".wikiwriter_cache")
 cache = diskcache.Cache(CACHE_DIR)
 
 _stats: dict[str, int] = {"hits": 0, "misses": 0}
+_telemetry: dict[str, int] = {"llm_calls": 0, "tokens_in": 0, "tokens_out": 0, "tool_calls": 0}
 
 
 def get_cache_stats() -> dict[str, int]:
@@ -21,6 +22,23 @@ def get_cache_stats() -> dict[str, int]:
 
 def reset_cache_stats() -> None:
     _stats["hits"] = _stats["misses"] = 0
+
+
+def record_llm_call(usage=None, tool_calls: int = 0) -> None:
+    _telemetry["llm_calls"] += 1
+    _telemetry["tool_calls"] += tool_calls
+    if usage is not None:
+        _telemetry["tokens_in"] += getattr(usage, "prompt_tokens", 0) or 0
+        _telemetry["tokens_out"] += getattr(usage, "completion_tokens", 0) or 0
+
+
+def get_telemetry() -> dict[str, int]:
+    return dict(_telemetry)
+
+
+def reset_telemetry() -> None:
+    for k in _telemetry:
+        _telemetry[k] = 0
 
 
 def cache_key(*args, **kwargs) -> str:

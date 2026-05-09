@@ -2,10 +2,12 @@
 # ABOUTME: Run tab shows per-stage collapsible thinking + inline results; Debug tab shows raw panels.
 
 import asyncio
+import time
 
 import plotly.graph_objects as go
 import streamlit as st
 
+from cache import get_telemetry
 from chart_utils import section_score_data, source_chart_data
 from constants import STAGE_META
 from dag_image import render_agent_loop, render_task_dag
@@ -244,6 +246,8 @@ def render_stage_results(stage: str, acc: dict) -> None:
 # ── Live streaming runner ──────────────────────────────────────────────────────
 
 def run_and_render(url: str) -> None:
+    run_start = time.monotonic()
+
     # ── Sidebar placeholders ───────────────────────────────────────────────────
     with st.sidebar:
         st.markdown("#### Agent Loop")
@@ -252,7 +256,10 @@ def run_and_render(url: str) -> None:
         st.markdown("#### Task DAG")
         dag_ph = st.empty()
         st.markdown("---")
-        counter_ph = st.empty()
+        status_ph = st.empty()   # spinner + current thought + elapsed time
+        counter_ph = st.empty()  # batch progress (source evaluation etc.)
+        st.markdown("---")
+        telemetry_ph = st.empty()
 
     # Render initial agent loop image (all pending)
     loop_ph.image(render_agent_loop([], None, set(), 0), width="stretch")
@@ -279,6 +286,30 @@ def run_and_render(url: str) -> None:
         "done_nodes": set(),
         "current_nodes": set(),
     }
+
+    def _elapsed() -> str:
+        secs = int(time.monotonic() - run_start)
+        m, s = divmod(secs, 60)
+        return f"{m}m {s:02d}s" if m else f"{s}s"
+
+    def _refresh_status(thought: str | None = None):
+        elapsed = _elapsed()
+        with status_ph.container():
+            if thought:
+                st.markdown(f"⟳ *{thought}* ({elapsed})")
+            else:
+                st.markdown(f"⟳ *Working…* ({elapsed})")
+
+    def _refresh_telemetry():
+        tel = get_telemetry()
+        with telemetry_ph.container():
+            st.caption(
+                f"🔢 **{tel['llm_calls']}** LLM calls · "
+                f"**{tel['tokens_in'] + tel['tokens_out']:,}** tokens "
+                f"({tel['tokens_in']:,} in / {tel['tokens_out']:,} out)"
+            )
+            if tel["tool_calls"]:
+                st.caption(f"🔧 **{tel['tool_calls']}** tool calls")
 
     def _refresh_loop_image():
         png = render_agent_loop(
@@ -406,9 +437,14 @@ def run_and_render(url: str) -> None:
             if event.status == "thinking":
                 # Use the already-set current_stage for separator labels so we get
                 # the friendly STAGE_META label regardless of narrator's stage name.
-                _append_thought(state["current_stage"] or stage, f"*{event.message}*")
+                effective_stage = state["current_stage"] or stage
+                _append_thought(effective_stage, f"*{event.message}*")
+                _refresh_status(event.message)
+                _refresh_telemetry()
 
             elif event.status == "running":
+                _, running_label, _ = STAGE_META.get(stage, ("•", stage, stage))
+                _refresh_status(running_label)
                 if event.count is not None and event.total is not None:
                     counter_ph.markdown(
                         f"**{event.message}:** {event.count} / {event.total}"
@@ -422,6 +458,7 @@ def run_and_render(url: str) -> None:
 
             elif event.status == "done":
                 state["done_stages"].add(stage)
+                status_ph.empty()
                 counter_ph.empty()
 
                 if event.data:
@@ -449,6 +486,8 @@ def run_and_render(url: str) -> None:
                 _refresh_loop_image()
 
     asyncio.run(_stream())
+    status_ph.empty()
+    _refresh_telemetry()
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────

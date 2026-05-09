@@ -7,7 +7,7 @@ import os
 import re
 from datetime import datetime, timezone
 
-from cache import get_cache_stats, reset_cache_stats
+from cache import get_cache_stats, reset_cache_stats, get_telemetry, reset_telemetry
 from dag import DAGExecutor
 from models import (
     ProgressEvent, WikiArticle, SourceEvaluation,
@@ -53,9 +53,8 @@ def _think(stage: str, message: str) -> ProgressEvent:
 
 
 async def _narrate(stage: str, context: dict):
-    """Yield a stream of thinking ProgressEvents from the narrator."""
-    thoughts = await narrate(stage, context)
-    for thought in thoughts:
+    """Yield a stream of thinking ProgressEvents from the narrator, line by line."""
+    async for thought in narrate(stage, context):
         yield _think(stage, thought)
 
 
@@ -114,6 +113,7 @@ class WikiWriterOrchestrator:
                 log.flush()
 
             _write({"type": "run_start", "url": url, "started_at": start.isoformat()})
+            reset_telemetry()
 
             async for event in self._run(url):
                 elapsed = round((datetime.now(timezone.utc) - start).total_seconds(), 2)
@@ -132,6 +132,7 @@ class WikiWriterOrchestrator:
                 "type": "run_end",
                 "t": round((datetime.now(timezone.utc) - start).total_seconds(), 2),
                 "cache": get_cache_stats(),
+                "telemetry": get_telemetry(),
             })
 
     async def _run(self, url: str):
