@@ -105,7 +105,8 @@ Return ONLY a JSON object:
   "primary_weaknesses": ["weakness 1", "weakness 2"],
   "source_quality_summary": "One sentence on whether existing sources are trustworthy",
   "source_trust_verdict": "One sentence: can a reader trust the article's claims as currently written?",
-  "edit_rationale": "Plain language: why edit (or why not), what we hope to achieve"
+  "edit_rationale": "Plain language: why edit (or why not), what we hope to achieve",
+  "scope_of_work": "3 sentences: what sections will be worked on, what each edit will do, and what the article will look like when done. If no_edit, state what is blocked and why."
 }}
 
 Important: sections[] should contain ONLY the 2-3 EDIT decisions (no SKIP entries needed).

@@ -115,6 +115,7 @@ class ArticleAssessment(BaseModel):
     no_edit: bool = False                    # True when guardrails block editing
     no_edit_reason: str = ""                 # human-readable guardrail explanation
     would_edit_sections: list[SectionDecision] = []  # what we'd fix if allowed
+    scope_of_work: str = ""                  # 3-sentence brief of what will be done
 
 
 # --- v1 planning models (kept for backward compat) ---

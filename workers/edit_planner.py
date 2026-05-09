@@ -19,6 +19,7 @@ _MODEL = os.getenv("DRAFT_MODEL", "gpt-4o")
 def _assessment_json(assessment: ArticleAssessment) -> str:
     edit_sections = [s for s in assessment.sections if s.action == "EDIT"]
     return json.dumps({
+        "scope_of_work": assessment.scope_of_work,
         "edit_scope": assessment.edit_scope,
         "primary_weaknesses": assessment.primary_weaknesses,
         "edit_rationale": assessment.edit_rationale,

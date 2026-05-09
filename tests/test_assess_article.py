@@ -145,3 +145,24 @@ def test_flip_flopped_section_forced_to_skip():
     result = _build_assessment(raw, flip_flopped={"History"})
     history = next(s for s in result.sections if s.name == "History")
     assert history.action == "SKIP"
+
+
+# ── scope_of_work ───────────────────────────────────────────────────────────
+
+def test_scope_of_work_propagates():
+    raw = _raw_normal()
+    raw["scope_of_work"] = "We will expand the History and Lead sections to improve coverage."
+    result = _build_assessment(raw, flip_flopped=set())
+    assert result.scope_of_work == raw["scope_of_work"]
+
+
+def test_scope_of_work_defaults_empty():
+    result = _build_assessment(_raw_normal(), flip_flopped=set())
+    assert result.scope_of_work == ""
+
+
+def test_scope_of_work_propagates_no_edit_path():
+    raw = _raw_no_edit()
+    raw["scope_of_work"] = "No editing will be performed due to BLP restrictions."
+    result = _build_assessment(raw, flip_flopped=set())
+    assert result.scope_of_work == raw["scope_of_work"]

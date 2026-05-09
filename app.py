@@ -6,6 +6,7 @@ import time
 
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 from cache import get_telemetry
 from chart_utils import section_score_data, source_chart_data
@@ -248,6 +249,8 @@ def render_assessment_summary(assessment: ArticleAssessment) -> None:
             + (f" `{s.edit_type}`" if s.edit_type else "")
             + f" — {s.rationale}"
         )
+    if assessment.scope_of_work:
+        st.info(f"📋 **Scope of work:** {assessment.scope_of_work}")
 
 
 def render_stage_results(stage: str, acc: dict) -> None:
@@ -326,6 +329,13 @@ def run_and_render(url: str) -> None:
             else:
                 st.markdown(f"⟳ *Working…* ({elapsed})")
 
+    def _scroll_to_bottom():
+        components.html(
+            "<script>window.parent.document.querySelector('section.main').scrollTo("
+            "{top: 999999, behavior: 'smooth'});</script>",
+            height=0,
+        )
+
     def _refresh_telemetry():
         tel = get_telemetry()
         tool_calls: dict = tel["tool_calls"]
@@ -342,6 +352,7 @@ def run_and_render(url: str) -> None:
             "font-size:0.82rem;color:#475569;'>" + " &nbsp;·&nbsp; ".join(parts) + "</div>",
             unsafe_allow_html=True,
         )
+        _scroll_to_bottom()
 
     def _refresh_loop_image():
         png = render_agent_loop(
