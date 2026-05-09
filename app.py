@@ -263,12 +263,20 @@ def render_stage_results(stage: str, acc: dict) -> None:
                 render_section_scores(grade.section_grades)
     elif stage == "ASSESS" and "assessment" in acc:
         render_assessment_summary(ArticleAssessment.model_validate(acc["assessment"]))
+    elif stage == "PLAN" and "dag" in acc and acc["dag"]:
+        png = render_task_dag(acc["dag"], set(), set())
+        st.image(png, use_container_width=True)
+        if acc.get("dag_narrative"):
+            st.caption(acc["dag_narrative"])
     elif stage == "EXEC" and "section_drafts" in acc:
         render_diff_view(acc["section_drafts"])
     elif stage == "CRITIQUE" and "critique" in acc:
         render_critique_panel(CritiqueResult.model_validate(acc["critique"]))
     elif stage == "GRADE" and "proposal" in acc:
         render_proposal_panel(EditProposal.model_validate(acc["proposal"]))
+        if "section_drafts" in acc:
+            st.divider()
+            render_diff_view(acc["section_drafts"])
 
 
 # ── Live streaming runner ──────────────────────────────────────────────────────
@@ -341,12 +349,12 @@ def run_and_render(url: str) -> None:
         tool_calls: dict = tel["tool_calls"]
         total_tools = sum(tool_calls.values())
         parts = [
-            f"🔢 **{tel['llm_calls']}** LLM calls",
-            f"🪙 **{tel['tokens_in'] + tel['tokens_out']:,}** tokens ({tel['tokens_in']:,} in / {tel['tokens_out']:,} out)",
+            f"🔢 <b>{tel['llm_calls']}</b> LLM calls",
+            f"🪙 <b>{tel['tokens_in'] + tel['tokens_out']:,}</b> tokens ({tel['tokens_in']:,} in / {tel['tokens_out']:,} out)",
         ]
         if total_tools:
             breakdown = " · ".join(f"{k}: {v}" for k, v in sorted(tool_calls.items()))
-            parts.append(f"🛠️ **{total_tools}** tool calls total ({breakdown})")
+            parts.append(f"🛠️ <b>{total_tools}</b> tool calls total ({breakdown})")
         telemetry_ph.markdown(
             "<div style='padding:6px 12px;background:#F1F5F9;border-top:1px solid #E2E8F0;"
             "font-size:0.82rem;color:#475569;'>" + " &nbsp;·&nbsp; ".join(parts) + "</div>",
@@ -476,6 +484,10 @@ def run_and_render(url: str) -> None:
             if event.status not in ("thinking", "summary") and stage != state["current_stage"]:
                 if stage in state["done_stages"]:
                     state["loop_count"] += 1
+                    # Clear per-stage rendering state so the second pass renders fresh
+                    state["stage_thoughts"][stage] = []
+                    state["stage_summaries"].pop(stage, None)
+                    state["done_stages"].discard(stage)
                 state["current_stage"] = stage
                 state["stage_history"].append(stage)
                 _refresh_loop_image()
