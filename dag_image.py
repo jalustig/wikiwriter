@@ -8,6 +8,9 @@ from PIL import Image, ImageDraw, ImageFont
 from dag import dag_layers
 
 STAGES = ["FETCH", "GATHER", "ASSESS", "PLAN", "EXEC", "CRITIQUE", "GRADE"]
+_INITIAL_STAGES = ["FETCH", "GATHER", "ASSESS"]
+_DECISION_NODE = "???"
+
 _STAGE_LABELS = {
     "FETCH":    "Fetch",
     "GATHER":   "Gather",
@@ -16,6 +19,7 @@ _STAGE_LABELS = {
     "EXEC":     "Execute",
     "CRITIQUE": "Critique",
     "GRADE":    "Grade",
+    _DECISION_NODE: "???",
 }
 
 _NODE_COLORS = {
@@ -54,12 +58,15 @@ def render_agent_loop(
     width: int = 210,
 ) -> bytes:
     """Render the agent loop diagram as PNG bytes for st.image()."""
+    # Progressive reveal: show full pipeline only after ASSESS is done
+    visible = STAGES if "ASSESS" in done_stages else _INITIAL_STAGES + [_DECISION_NODE]
+
     NW = width - 20
     NH = 34
     PAD = 10
     VG = 14
-    n = len(STAGES)
-    back_edge_extra = 40 if loop_count > 0 else 0
+    n = len(visible)
+    back_edge_extra = 40 if loop_count > 0 and "ASSESS" in done_stages else 0
     H = PAD + n * NH + (n - 1) * VG + PAD + back_edge_extra
 
     img = Image.new("RGB", (width, H), "#FFFFFF")
@@ -68,13 +75,13 @@ def render_agent_loop(
 
     cx = PAD + NW // 2
     positions = {}
-    for i, stage in enumerate(STAGES):
+    for i, stage in enumerate(visible):
         cy = PAD + i * (NH + VG) + NH // 2
         positions[stage] = (cx, cy)
 
     # Draw forward edges
-    for i in range(len(STAGES) - 1):
-        s1, s2 = STAGES[i], STAGES[i + 1]
+    for i in range(len(visible) - 1):
+        s1, s2 = visible[i], visible[i + 1]
         _, y1 = positions[s1]
         _, y2 = positions[s2]
         mid_y1 = y1 + NH // 2
@@ -85,8 +92,8 @@ def render_agent_loop(
             fill="#94A3B8",
         )
 
-    # Draw back-edge if loop occurred (CRITIQUE → PLAN)
-    if loop_count > 0:
+    # Draw back-edge if loop occurred (CRITIQUE → PLAN) — only when full pipeline is visible
+    if loop_count > 0 and "PLAN" in positions and "CRITIQUE" in positions:
         _, plan_cy = positions["PLAN"]
         _, crit_cy = positions["CRITIQUE"]
         right_x = PAD + NW + 4
@@ -109,25 +116,27 @@ def render_agent_loop(
         )
 
     # Draw nodes
-    for stage in STAGES:
+    for stage in visible:
         cx_node, cy_node = positions[stage]
         x0 = PAD
         y0 = cy_node - NH // 2
         x1 = PAD + NW
         y1 = cy_node + NH // 2
 
-        if stage == current_stage:
-            state = "active"
+        if stage == _DECISION_NODE:
+            fill, border, bw = "#FEF9C3", "#CA8A04", 1
+        elif stage == current_stage:
+            fill, border, bw = _NODE_COLORS["active"]
         elif stage in done_stages:
-            state = "done"
+            fill, border, bw = _NODE_COLORS["done"]
         else:
-            state = "pending"
+            fill, border, bw = _NODE_COLORS["pending"]
 
-        fill, border, bw = _NODE_COLORS[state]
         draw.rounded_rectangle([x0, y0, x1, y1], radius=6, fill=fill, outline=border, width=bw)
 
         label = _STAGE_LABELS.get(stage, stage)
-        draw.text((cx_node, cy_node), label, fill="#1E293B", anchor="mm", font=f_label)
+        text_color = "#CA8A04" if stage == _DECISION_NODE else "#1E293B"
+        draw.text((cx_node, cy_node), label, fill=text_color, anchor="mm", font=f_label)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")

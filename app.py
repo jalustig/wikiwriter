@@ -1,10 +1,12 @@
 # ABOUTME: Streamlit app — sidebar agent loop diagram, two-tab layout (Run/Debug).
-# ABOUTME: Run tab shows flat thinking feed + results; Debug tab shows raw data panels.
+# ABOUTME: Run tab shows per-stage collapsible thinking + inline results; Debug tab shows raw panels.
 
 import asyncio
 
+import plotly.graph_objects as go
 import streamlit as st
 
+from chart_utils import section_score_data, source_chart_data
 from constants import STAGE_META
 from dag_image import render_agent_loop, render_task_dag
 from diff_utils import section_diff_html
@@ -13,6 +15,8 @@ from models import (
     CritiqueResult, EditProposal,
 )
 from orchestrator import WikiWriterOrchestrator
+
+_PIPELINE_STAGES = ["FETCH", "GATHER", "ASSESS", "PLAN", "EXEC", "CRITIQUE", "GRADE", "SUMMARIZE"]
 
 CAUTION_COLORS = {"LOW": "green", "MODERATE": "orange", "HIGH": "red", "CRITICAL": "red"}
 VERDICT_COLORS = {
@@ -161,6 +165,82 @@ def render_proposal_panel(proposal: EditProposal) -> None:
         st.warning("Edit rejected.")
 
 
+# ── Inline stage result renderers ─────────────────────────────────────────────
+
+def render_source_charts(audit: list) -> None:
+    status_counts, type_counts = source_chart_data(audit)
+    col1, col2 = st.columns(2)
+    with col1:
+        fig = go.Figure(go.Pie(
+            labels=list(status_counts.keys()),
+            values=list(status_counts.values()),
+            hole=0.3,
+        ))
+        fig.update_layout(title_text="Source Status", margin=dict(t=40, b=10, l=10, r=10),
+                          height=220, showlegend=True)
+        st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        fig = go.Figure(go.Pie(
+            labels=list(type_counts.keys()),
+            values=list(type_counts.values()),
+            hole=0.3,
+        ))
+        fig.update_layout(title_text="Source Types", margin=dict(t=40, b=10, l=10, r=10),
+                          height=220, showlegend=True)
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def render_section_scores(section_grades: dict) -> None:
+    sections, scores = section_score_data(section_grades)
+    if not sections:
+        return
+    fig = go.Figure(go.Bar(
+        x=scores, y=sections, orientation="h",
+        marker_color=["#EF4444" if s < 5 else "#F59E0B" if s < 7 else "#22C55E" for s in scores],
+    ))
+    fig.update_layout(
+        title_text="Score per Section", xaxis=dict(range=[0, 10]),
+        margin=dict(t=40, b=10, l=10, r=10), height=max(120, len(sections) * 28),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_assessment_summary(assessment: ArticleAssessment) -> None:
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Importance", assessment.importance.tier)
+    col2.metric("Class", assessment.article_class)
+    col3.metric("Effort", assessment.effort_ceiling)
+    if assessment.primary_weaknesses:
+        st.caption("**Weaknesses:** " + " · ".join(assessment.primary_weaknesses[:3]))
+    editing = [s for s in assessment.sections if s.action == "EDIT"]
+    skipped = [s for s in assessment.sections if s.action == "SKIP"]
+    rows = [
+        f"{'✏️' if s.action == 'EDIT' else '✓'} **{s.name}**"
+        + (f" `{s.edit_type}`" if s.edit_type else "")
+        + f" — {s.rationale}"
+        for s in (editing + skipped)
+    ]
+    st.markdown("\n\n".join(rows))
+
+
+def render_stage_results(stage: str, acc: dict) -> None:
+    if stage == "GATHER":
+        if "audit" in acc:
+            render_source_charts(acc["audit"])
+        if "grade" in acc:
+            grade = ContentGrade.model_validate(acc["grade"])
+            if grade.section_grades:
+                render_section_scores(grade.section_grades)
+    elif stage == "ASSESS" and "assessment" in acc:
+        render_assessment_summary(ArticleAssessment.model_validate(acc["assessment"]))
+    elif stage == "EXEC" and "section_drafts" in acc:
+        render_diff_view(acc["section_drafts"])
+    elif stage == "CRITIQUE" and "critique" in acc:
+        render_critique_panel(CritiqueResult.model_validate(acc["critique"]))
+    elif stage == "GRADE" and "proposal" in acc:
+        render_proposal_panel(EditProposal.model_validate(acc["proposal"]))
+
+
 # ── Live streaming runner ──────────────────────────────────────────────────────
 
 def run_and_render(url: str) -> None:
@@ -180,9 +260,9 @@ def run_and_render(url: str) -> None:
     # ── Main tabs ──────────────────────────────────────────────────────────────
     tab_run, tab_debug = st.tabs(["▶ Run", "🔬 Debug"])
 
+    # Pre-allocate one placeholder per pipeline stage inside tab_run
     with tab_run:
-        feed_ph = st.empty()
-        results_ph = st.empty()
+        stage_phs = {stage: st.empty() for stage in _PIPELINE_STAGES}
 
     with tab_debug:
         debug_ph = st.empty()
@@ -193,8 +273,7 @@ def run_and_render(url: str) -> None:
         "current_stage": None,
         "done_stages": set(),
         "loop_count": 0,
-        "feed_lines": [],
-        "last_feed_stage": None,
+        "stage_thoughts": {s: [] for s in _PIPELINE_STAGES},
         "accumulated": {},
         "task_dag": {},
         "done_nodes": set(),
@@ -219,13 +298,30 @@ def run_and_render(url: str) -> None:
             )
             dag_ph.image(png, width="stretch")
 
+    def _refresh_stage_ph(stage: str):
+        ph = stage_phs.get(stage)
+        if ph is None:
+            return
+        thoughts = state["stage_thoughts"].get(stage, [])
+        is_done = stage in state["done_stages"]
+        _, running_label, done_label = STAGE_META.get(stage, ("•", stage, stage))
+
+        with ph.container():
+            if is_done:
+                if thoughts:
+                    with st.expander(f"💭 {done_label} — thinking (expand)", expanded=False):
+                        st.markdown("\n\n".join(thoughts))
+                render_stage_results(stage, state["accumulated"])
+            else:
+                st.markdown(f"⟳ **{running_label}**")
+                if thoughts:
+                    st.markdown("\n\n".join(thoughts))
+
     def _append_thought(stage: str, text: str):
-        _, running_label, _ = STAGE_META.get(stage, ("•", stage, stage))
-        if state["last_feed_stage"] != stage:
-            state["feed_lines"].append(f"---\n**{running_label}**\n")
-            state["last_feed_stage"] = stage
-        state["feed_lines"].append(text)
-        feed_ph.markdown("\n\n".join(state["feed_lines"]))
+        if stage not in state["stage_thoughts"]:
+            state["stage_thoughts"][stage] = []
+        state["stage_thoughts"][stage].append(text)
+        _refresh_stage_ph(stage)
 
     def _render_debug(acc: dict) -> None:
         with debug_ph.container():
@@ -345,6 +441,7 @@ def run_and_render(url: str) -> None:
                         _refresh_dag_image()
 
                 _refresh_loop_image()
+                _refresh_stage_ph(stage)
                 _render_debug(state["accumulated"])
 
             elif event.status == "error":
@@ -352,15 +449,6 @@ def run_and_render(url: str) -> None:
                 _refresh_loop_image()
 
     asyncio.run(_stream())
-
-    # Render results in Run tab after run completes
-    acc = state["accumulated"]
-    with results_ph.container():
-        st.divider()
-        if "section_drafts" in acc:
-            render_diff_view(acc["section_drafts"])
-        if "proposal" in acc:
-            render_proposal_panel(EditProposal.model_validate(acc["proposal"]))
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────

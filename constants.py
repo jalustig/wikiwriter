@@ -4,7 +4,7 @@
 STAGE_META = {
     "FETCH":     ("🌐", "Reading article…",           "Read article"),
     "GATHER":    ("📊", "Gathering evidence…",         "Evidence gathered"),
-    "ASSESS":    ("🧠", "Assessing what's needed…",    "Assessment complete"),
+    "ASSESS":    ("🧠", "Choosing editorial approach…", "Approach decided"),
     "PLAN":      ("🗺️",  "Planning tasks…",             "Task plan ready"),
     "EXEC":      ("✏️",  "Executing task DAG…",         "Tasks complete"),
     "CRITIQUE":  ("🔬", "Critiquing sections…",        "Critique done"),
