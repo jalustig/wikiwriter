@@ -51,9 +51,11 @@ def _enforce_section_cap(sections: list[SectionDecision]) -> list[SectionDecisio
     return kept + demoted + skips
 
 
-def _parse_sections(raw_list: list[dict], flip_flopped: set) -> list[SectionDecision]:
+def _parse_sections(raw_list: list, flip_flopped: set) -> list[SectionDecision]:
     sections = []
     for s in raw_list:
+        if isinstance(s, str):
+            s = {"name": s, "action": "EDIT", "rationale": ""}
         name = s["name"]
         action = "SKIP" if name in flip_flopped else s.get("action", "SKIP")
         rationale = ("flip-flopped section — do not edit" if name in flip_flopped
