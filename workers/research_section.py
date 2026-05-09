@@ -8,7 +8,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import cache, cache_key, record_llm_start, record_llm_tokens
+from cache import record_llm_start, record_llm_tokens
 from models import WikiArticle, ArticleSummary, SectionResearch, Claim, SourceEvaluation
 from tools.search import search
 from workers.source_evaluator import SourceEvaluator
@@ -97,10 +97,6 @@ async def research_section(
     section_name: str,
     article_summary: ArticleSummary,
 ) -> SectionResearch:
-    key = cache_key("research_section_v2", article.url, section_name)
-    if key in cache:
-        return SectionResearch.model_validate(cache[key])
-
     # Step 1: Use full LLM claim extractor for accurate citation tagging
     from workers.claim_extractor import ClaimExtractor
     from models import ImprovementPlan, SectionPlan
@@ -116,9 +112,7 @@ async def research_section(
     uncited = [c for c in claim_map.claims if c.status in ("uncited", "undercited")]
 
     if not uncited:
-        result = SectionResearch(section_name=section_name, claim_map=claim_map, new_sources=[])
-        cache.set(key, result.model_dump(), expire=3600)
-        return result
+        return SectionResearch(section_name=section_name, claim_map=claim_map, new_sources=[])
 
     # Step 2: Find sources for uncited claims
     evaluator = SourceEvaluator()
@@ -169,10 +163,8 @@ async def research_section(
     all_new_sources.sort(key=lambda s: s.overall_score, reverse=True)
     top_sources = all_new_sources[:10]
 
-    result = SectionResearch(
+    return SectionResearch(
         section_name=section_name,
         claim_map=claim_map,
         new_sources=top_sources,
     )
-    cache.set(key, result.model_dump(), expire=3600)
-    return result

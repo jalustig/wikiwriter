@@ -44,11 +44,7 @@ class SourceEvaluator:
         url: str,
         article_summary: ArticleSummary,
     ) -> SourceEvaluation:
-        eval_key = cache_key("source_evaluator_v2", url, article_summary.topic[:80])
-        if eval_key in cache:
-            return SourceEvaluation.model_validate(cache[eval_key])
-
-        # Try to fetch the page
+        # Fetch first (has its own cache) so fetch telemetry always fires
         status = "DEAD"
         page_text = ""
         try:
@@ -62,6 +58,10 @@ class SourceEvaluator:
                     status = "ARCHIVED"
                 except Exception:
                     pass
+
+        eval_key = cache_key("source_evaluator_v2", url, article_summary.topic[:80])
+        if eval_key in cache:
+            return SourceEvaluation.model_validate(cache[eval_key])
 
         if status == "DEAD":
             result = SourceEvaluation(
