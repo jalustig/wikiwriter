@@ -64,20 +64,27 @@ def render_grade_panel(grade: ContentGrade) -> None:
 
 def render_assessment_panel(assessment: ArticleAssessment) -> None:
     st.subheader("Article Assessment")
+    if assessment.no_edit:
+        st.error(f"🚫 Not editing — {assessment.no_edit_reason}")
     col1, col2, col3 = st.columns(3)
     col1.metric("Importance", assessment.importance.tier)
     col2.metric("Class", assessment.article_class)
     col3.metric("Effort", assessment.effort_ceiling)
     st.caption(assessment.edit_rationale)
+    if assessment.source_trust_verdict:
+        st.info(assessment.source_trust_verdict)
     if assessment.primary_weaknesses:
         st.write("**Primary weaknesses:**")
         for w in assessment.primary_weaknesses:
             st.write(f"- {w}")
-    st.write("**Per-section decisions:**")
-    for s in assessment.sections:
-        icon = "✏️" if s.action == "EDIT" else "✓"
-        tag = f"[{s.edit_type}]" if s.edit_type else ""
-        st.write(f"{icon} **{s.name}** {tag} — {s.rationale}")
+    sections_to_show = assessment.sections or assessment.would_edit_sections
+    label = "Would have edited:" if assessment.no_edit else "Sections to edit:"
+    if sections_to_show:
+        st.write(f"**{label}**")
+        for s in sections_to_show:
+            icon = "✏️" if s.action == "EDIT" else "✓"
+            tag = f"[{s.edit_type}]" if s.edit_type else ""
+            st.write(f"{icon} **{s.name}** {tag} — {s.rationale}")
 
 
 def render_section_diff(draft: dict) -> None:
@@ -208,21 +215,39 @@ def render_section_scores(section_grades: dict) -> None:
 
 
 def render_assessment_summary(assessment: ArticleAssessment) -> None:
+    if assessment.no_edit:
+        st.error(f"🚫 **Not editing** — {assessment.no_edit_reason}")
+        if assessment.source_trust_verdict:
+            st.markdown(f"**Trust verdict:** {assessment.source_trust_verdict}")
+        col1, col2 = st.columns(2)
+        col1.metric("Importance", assessment.importance.tier)
+        col2.metric("Class", assessment.article_class)
+        if assessment.primary_weaknesses:
+            st.caption("**Weaknesses:** " + " · ".join(assessment.primary_weaknesses[:3]))
+        if assessment.would_edit_sections:
+            st.markdown("**Would have edited (if allowed):**")
+            for s in assessment.would_edit_sections:
+                st.markdown(
+                    f"✏️ **{s.name}**"
+                    + (f" `{s.edit_type}`" if s.edit_type else "")
+                    + f" — {s.rationale}"
+                )
+        return
+
     col1, col2, col3 = st.columns(3)
     col1.metric("Importance", assessment.importance.tier)
     col2.metric("Class", assessment.article_class)
     col3.metric("Effort", assessment.effort_ceiling)
+    if assessment.source_trust_verdict:
+        st.caption(assessment.source_trust_verdict)
     if assessment.primary_weaknesses:
         st.caption("**Weaknesses:** " + " · ".join(assessment.primary_weaknesses[:3]))
-    editing = [s for s in assessment.sections if s.action == "EDIT"]
-    skipped = [s for s in assessment.sections if s.action == "SKIP"]
-    rows = [
-        f"{'✏️' if s.action == 'EDIT' else '✓'} **{s.name}**"
-        + (f" `{s.edit_type}`" if s.edit_type else "")
-        + f" — {s.rationale}"
-        for s in (editing + skipped)
-    ]
-    st.markdown("\n\n".join(rows))
+    for s in assessment.sections:
+        st.markdown(
+            f"✏️ **{s.name}**"
+            + (f" `{s.edit_type}`" if s.edit_type else "")
+            + f" — {s.rationale}"
+        )
 
 
 def render_stage_results(stage: str, acc: dict) -> None:

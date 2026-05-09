@@ -107,10 +107,14 @@ class ArticleAssessment(BaseModel):
     article_class: Literal["STUB", "DEVELOPING", "COMPLETE", "OVER_DETAILED"]
     effort_ceiling: Literal["FULL", "MODERATE", "LIGHT"]
     edit_scope: Literal["WHOLE_ARTICLE", "SPECIFIC_SECTIONS"]
-    sections: list[SectionDecision]
+    sections: list[SectionDecision]          # only EDIT sections (capped at 2-3)
     primary_weaknesses: list[str]
     source_quality_summary: str
+    source_trust_verdict: str = ""           # can this article be trusted as-is?
     edit_rationale: str
+    no_edit: bool = False                    # True when guardrails block editing
+    no_edit_reason: str = ""                 # human-readable guardrail explanation
+    would_edit_sections: list[SectionDecision] = []  # what we'd fix if allowed
 
 
 # --- v1 planning models (kept for backward compat) ---

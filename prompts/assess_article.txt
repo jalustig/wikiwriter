@@ -1,4 +1,4 @@
-You are a senior Wikipedia editor making editorial decisions about an article that needs improvement. Your job is to decide WHAT needs to change — not how. Be direct, decisive, and opinionated.
+You are a senior Wikipedia editor making a binary editorial decision: should we edit this article, and if so, which 2-3 sections need it most?
 
 ## Article: {article_title}
 
@@ -20,7 +20,7 @@ Quality narrative: {grade_narrative}
 
 ### Editorial Environment
 Caution level: {caution_level}
-Flip-flopped sections (do NOT edit): {flip_flopped_sections}
+Flip-flopped sections (NEVER edit): {flip_flopped_sections}
 Editor norms: {editor_norms}
 Policies/restrictions: {policies_and_restrictions}
 Active disputes: {active_disputes}
@@ -29,48 +29,66 @@ Environment: {environment_narrative}
 ### Existing Sources
 {source_quality_summary}
 
-## Your Task
+---
 
-Make editorial decisions about this article. Think like a senior Wikipedia editor who has reviewed thousands of articles.
+## Decision Phase 1: Should we edit at all?
 
-**Importance** — How important is this article to Wikipedia's mission?
-- VITAL: Core knowledge every encyclopedia must cover — major world figures, countries, landmark events, foundational scientific concepts
-- MAJOR: Significant topic with broad reader interest and substantial content potential
-- NOTABLE: Worthy of inclusion, limited depth appropriate
-- MINOR: Marginal topic, stub treatment is correct
+Check these hard stops — if ANY apply, set no_edit=true:
+- Article is about a living person AND has BLP policy flags or high controversy
+- Caution level is CRITICAL
+- Active legal threats or harassment disputes on the talk page
+- Article is fully protected or has a recent arbcom sanction
+- policies_and_restrictions contains anything that explicitly prohibits editing
 
-**Classification** — What kind of article is this in its current state?
+If no_edit=true, you MUST still provide:
+- A full quality and trust assessment (how reliable is this article RIGHT NOW?)
+- source_trust_verdict: can a reader trust this article's claims as written?
+- would_edit_sections: the 2-3 sections you WOULD fix if allowed (ranked by priority)
+- no_edit_reason: plain-language explanation of what is blocking editing
+
+## Decision Phase 2: Which 2-3 sections need work?
+
+Pick the sections that will have the MOST IMPACT. Criteria in order:
+1. Sections with the lowest quality scores that aren't already well-sourced
+2. Sections that are core to understanding the topic (not trivia/appendices)
+3. Sections where a targeted fix is feasible (don't pick sections needing full rewrites if effort_ceiling is LIGHT)
+
+**Cap: select at most 3 sections for EDIT. If there are more candidates, pick the top 3 and SKIP the rest.**
+
+Do NOT edit: flip-flopped sections, "References", "External links", "See also", "Notes" (unless they are the only meaningful content).
+
+**Importance:**
+- VITAL: Core knowledge every encyclopedia must cover
+- MAJOR: Significant, broad interest
+- NOTABLE: Worthy of inclusion, limited depth
+- MINOR: Marginal, stub treatment correct
+
+**article_class:**
 - STUB: Too short, missing major content
-- DEVELOPING: Present but incomplete, gaps in coverage
-- COMPLETE: Good coverage, needs polish not expansion
-- OVER_DETAILED: Excessive detail on minor aspects, needs pruning
+- DEVELOPING: Present but incomplete
+- COMPLETE: Good coverage, needs polish
+- OVER_DETAILED: Excessive detail, needs pruning
 
-**Edit scope** — Does this article need work on specific sections, or broad treatment?
-- WHOLE_ARTICLE: The article has systemic problems (poor lead, missing sections, structural issues) that require broad treatment
-- SPECIFIC_SECTIONS: Only specific sections need work; the rest is fine
+**effort_ceiling:**
+- FULL: Deep research warranted
+- MODERATE: Targeted improvements
+- LIGHT: Minor fixes only
 
-**Per-section decisions** — For EVERY section, decide: EDIT or SKIP?
-- EDIT types: EXPAND (thin content), FACT_CHECK (suspicious/outdated claims), PRUNE (excessive detail), CITE_REPAIR (missing/broken citations)
-- SKIP if: the section is in flip_flopped_sections, the section is good enough, or editing it would be risky given the caution level
+**edit_type per section:**
+- EXPAND: thin or missing content
+- FACT_CHECK: suspicious, outdated, or contested claims
+- PRUNE: excessive or off-topic detail
+- CITE_REPAIR: missing or broken citations
 
-**Effort ceiling** — How much effort is warranted?
-- FULL: Deep research, multiple sources per section, comprehensive
-- MODERATE: Targeted improvements in key sections
-- LIGHT: Minor fixes only — caution level is high or article is minor
-
-Rules:
-- NEVER include flip-flopped sections in EDIT decisions
-- If caution_level is CRITICAL, set effort_ceiling to LIGHT and be very conservative
-- Base edit_type on what that specific section actually needs, not generic choices
-- Be specific in rationale: name the actual weakness
-
-Return ONLY a JSON object — no preamble, no markdown fences:
+Return ONLY a JSON object:
 
 {{
+  "no_edit": false,
+  "no_edit_reason": "",
   "importance": {{
     "tier": "VITAL|MAJOR|NOTABLE|MINOR",
-    "rationale": "Why this article matters (or doesn't) to Wikipedia's mission",
-    "expected_depth": "What level of coverage is appropriate: brief / solid / comprehensive"
+    "rationale": "Why this article matters to Wikipedia's mission",
+    "expected_depth": "brief|solid|comprehensive"
   }},
   "article_class": "STUB|DEVELOPING|COMPLETE|OVER_DETAILED",
   "effort_ceiling": "FULL|MODERATE|LIGHT",
@@ -80,10 +98,15 @@ Return ONLY a JSON object — no preamble, no markdown fences:
       "name": "section name",
       "action": "EDIT|SKIP",
       "edit_type": "EXPAND|FACT_CHECK|PRUNE|CITE_REPAIR|null",
-      "rationale": "specific reason"
+      "rationale": "specific reason — name the actual weakness"
     }}
   ],
+  "would_edit_sections": [],
   "primary_weaknesses": ["weakness 1", "weakness 2"],
   "source_quality_summary": "One sentence on whether existing sources are trustworthy",
-  "edit_rationale": "Plain language: why are we editing this article and what do we hope to achieve?"
+  "source_trust_verdict": "One sentence: can a reader trust the article's claims as currently written?",
+  "edit_rationale": "Plain language: why edit (or why not), what we hope to achieve"
 }}
+
+Important: sections[] should contain ONLY the 2-3 EDIT decisions (no SKIP entries needed).
+If no_edit=true, sections[] must be empty and would_edit_sections[] must have the 2-3 priority sections.

@@ -17,6 +17,8 @@ _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 _PROMPT = (Path(__file__).parent.parent / "prompts" / "assess_article.txt").read_text()
 _MODEL = os.getenv("DRAFT_MODEL", "gpt-4o")
 
+_MAX_EDIT_SECTIONS = 3
+
 
 def _source_quality_summary(source_evals: list[SourceEvaluation]) -> str:
     if not source_evals:
@@ -29,6 +31,76 @@ def _source_quality_summary(source_evals: list[SourceEvaluation]) -> str:
         f"{total} existing citations: {usable} reliable, {weak} weak, {dead} dead. "
         + ("Strong source base." if usable / max(total, 1) > 0.6
            else "Many citations need replacement or supplementation.")
+    )
+
+
+def _enforce_section_cap(sections: list[SectionDecision]) -> list[SectionDecision]:
+    """Demote excess EDIT sections to SKIP, keeping at most _MAX_EDIT_SECTIONS."""
+    edits = [s for s in sections if s.action == "EDIT"]
+    skips = [s for s in sections if s.action == "SKIP"]
+    if len(edits) <= _MAX_EDIT_SECTIONS:
+        return sections
+    kept = edits[:_MAX_EDIT_SECTIONS]
+    demoted = [
+        SectionDecision(
+            name=s.name, action="SKIP", edit_type=None,
+            rationale=f"Deprioritised — {s.rationale}"
+        )
+        for s in edits[_MAX_EDIT_SECTIONS:]
+    ]
+    return kept + demoted + skips
+
+
+def _parse_sections(raw_list: list[dict], flip_flopped: set) -> list[SectionDecision]:
+    sections = []
+    for s in raw_list:
+        name = s["name"]
+        action = "SKIP" if name in flip_flopped else s.get("action", "SKIP")
+        rationale = ("flip-flopped section — do not edit" if name in flip_flopped
+                     else s.get("rationale", ""))
+        sections.append(SectionDecision(
+            name=name,
+            action=action,
+            edit_type=s.get("edit_type") if action == "EDIT" else None,
+            rationale=rationale,
+        ))
+    return sections
+
+
+def _build_assessment(raw: dict, flip_flopped: set) -> ArticleAssessment:
+    """Build ArticleAssessment from parsed LLM response dict."""
+    importance = ArticleImportance(
+        tier=raw["importance"]["tier"],
+        rationale=raw["importance"]["rationale"],
+        expected_depth=raw["importance"]["expected_depth"],
+    )
+
+    no_edit = bool(raw.get("no_edit", False))
+
+    if no_edit:
+        sections = []
+        would_edit = _parse_sections(raw.get("would_edit_sections", []), flip_flopped)
+    else:
+        sections = _parse_sections(raw.get("sections", []), flip_flopped)
+        sections = _enforce_section_cap(sections)
+        # Keep SKIP entries only if they were flip-flopped (useful for display); drop others
+        flip_skips = {s.name for s in sections if s.action == "SKIP" and s.name in flip_flopped}
+        sections = [s for s in sections if s.action == "EDIT" or s.name in flip_skips]
+        would_edit = []
+
+    return ArticleAssessment(
+        importance=importance,
+        article_class=raw.get("article_class", "DEVELOPING"),
+        effort_ceiling=raw.get("effort_ceiling", "MODERATE"),
+        edit_scope=raw.get("edit_scope", "SPECIFIC_SECTIONS"),
+        sections=sections,
+        primary_weaknesses=raw.get("primary_weaknesses", []),
+        source_quality_summary=raw.get("source_quality_summary", ""),
+        source_trust_verdict=raw.get("source_trust_verdict", ""),
+        edit_rationale=raw.get("edit_rationale", ""),
+        no_edit=no_edit,
+        no_edit_reason=raw.get("no_edit_reason", ""),
+        would_edit_sections=would_edit,
     )
 
 
@@ -87,42 +159,7 @@ async def assess_article(
     record_llm_call(response.usage)
 
     raw = json.loads(response.choices[0].message.content)
-
-    importance = ArticleImportance(
-        tier=raw["importance"]["tier"],
-        rationale=raw["importance"]["rationale"],
-        expected_depth=raw["importance"]["expected_depth"],
-    )
-
-    sections = [
-        SectionDecision(
-            name=s["name"],
-            action=s["action"],
-            edit_type=s.get("edit_type"),
-            rationale=s["rationale"],
-        )
-        for s in raw.get("sections", [])
-    ]
-
-    # Enforce: never include flip-flopped sections as EDIT
     flip_set = set(environment.flip_flopped_sections)
-    sections = [
-        s if s.name not in flip_set else SectionDecision(
-            name=s.name, action="SKIP",
-            edit_type=None, rationale="flip-flopped section — do not edit"
-        )
-        for s in sections
-    ]
-
-    result = ArticleAssessment(
-        importance=importance,
-        article_class=raw.get("article_class", "DEVELOPING"),
-        effort_ceiling=raw.get("effort_ceiling", "MODERATE"),
-        edit_scope=raw.get("edit_scope", "SPECIFIC_SECTIONS"),
-        sections=sections,
-        primary_weaknesses=raw.get("primary_weaknesses", []),
-        source_quality_summary=raw.get("source_quality_summary", ""),
-        edit_rationale=raw.get("edit_rationale", ""),
-    )
+    result = _build_assessment(raw, flip_set)
     cache.set(key, result.model_dump(), expire=3600)
     return result

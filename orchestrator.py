@@ -264,33 +264,38 @@ class WikiWriterOrchestrator:
             article, article_summary, content_grade, environment, source_evals
         )
         sections_to_edit = [s for s in assessment.sections if s.action == "EDIT"]
-        async for t in _narrate("assess", {
+        assess_ctx = {
             "article_title": article.title,
             "importance": assessment.importance.tier,
             "article_class": assessment.article_class,
             "effort_ceiling": assessment.effort_ceiling,
             "edit_rationale": assessment.edit_rationale,
+            "no_edit": assessment.no_edit,
+            "no_edit_reason": assessment.no_edit_reason,
             "primary_weaknesses": assessment.primary_weaknesses,
+            "source_trust_verdict": assessment.source_trust_verdict,
             "sections_to_edit": [
                 {"name": s.name, "edit_type": s.edit_type, "rationale": s.rationale}
                 for s in sections_to_edit
             ],
-            "sections_skipped": [s.name for s in assessment.sections if s.action == "SKIP"],
-        }):
-            yield t
-        async for s in _emit_summary("assess", {
-            "article_title": article.title,
-            "importance": assessment.importance.tier,
-            "article_class": assessment.article_class,
-            "effort_ceiling": assessment.effort_ceiling,
-            "edit_rationale": assessment.edit_rationale,
-            "primary_weaknesses": assessment.primary_weaknesses,
-            "sections_to_edit": [
-                {"name": s2.name, "edit_type": s2.edit_type, "rationale": s2.rationale}
-                for s2 in sections_to_edit
+            "would_edit_sections": [
+                {"name": s.name, "edit_type": s.edit_type, "rationale": s.rationale}
+                for s in assessment.would_edit_sections
             ],
-        }):
+        }
+        async for t in _narrate("assess", assess_ctx):
+            yield t
+        async for s in _emit_summary("assess", assess_ctx):
             yield s
+
+        if assessment.no_edit:
+            yield ProgressEvent(
+                stage="ASSESS", status="done",
+                message=f"No edit — {assessment.no_edit_reason}",
+                data={"assessment": assessment.model_dump()},
+            )
+            return
+
         yield ProgressEvent(
             stage="ASSESS", status="done",
             message=f"{assessment.importance.tier} | {assessment.article_class} | "
@@ -300,8 +305,9 @@ class WikiWriterOrchestrator:
 
         if not sections_to_edit:
             yield ProgressEvent(
-                stage="ASSESS", status="error",
-                message="Nothing to edit — assessment found no sections worth improving.",
+                stage="ASSESS", status="done",
+                message="Assessment complete — no sections flagged for editing.",
+                data={"assessment": assessment.model_dump()},
             )
             return
 
