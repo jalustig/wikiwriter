@@ -16,7 +16,7 @@ async def search(query: str, max_results: int = 5) -> list[dict]:
     """Search the web via Tavily. Returns list of {url, title, content} dicts."""
     from tavily import TavilyClient
 
-    record_tool_call()
+    record_tool_call("search")
     client = TavilyClient(api_key=_TAVILY_API_KEY)
     loop = asyncio.get_event_loop()
     response = await loop.run_in_executor(
