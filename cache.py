@@ -13,7 +13,12 @@ CACHE_DIR = os.getenv("CACHE_DIR", ".wikiwriter_cache")
 cache = diskcache.Cache(CACHE_DIR)
 
 _stats: dict[str, int] = {"hits": 0, "misses": 0}
-_telemetry: dict[str, int] = {"llm_calls": 0, "tokens_in": 0, "tokens_out": 0, "tool_calls": 0}
+_telemetry: dict = {
+    "llm_calls": 0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "tool_calls": {},   # tool_name -> count
+}
 
 
 def get_cache_stats() -> dict[str, int]:
@@ -24,25 +29,36 @@ def reset_cache_stats() -> None:
     _stats["hits"] = _stats["misses"] = 0
 
 
-def record_llm_call(usage=None, tool_calls: int = 0) -> None:
+def record_llm_start() -> None:
+    """Increment LLM call counter at submission time, before awaiting the response."""
     _telemetry["llm_calls"] += 1
-    _telemetry["tool_calls"] += tool_calls
+
+
+def record_llm_tokens(usage) -> None:
+    """Record token counts after the LLM response arrives."""
     if usage is not None:
         _telemetry["tokens_in"] += getattr(usage, "prompt_tokens", 0) or 0
         _telemetry["tokens_out"] += getattr(usage, "completion_tokens", 0) or 0
 
 
-def record_tool_call() -> None:
-    _telemetry["tool_calls"] += 1
+def record_tool_call(tool: str) -> None:
+    _telemetry["tool_calls"][tool] = _telemetry["tool_calls"].get(tool, 0) + 1
 
 
-def get_telemetry() -> dict[str, int]:
-    return dict(_telemetry)
+def get_telemetry() -> dict:
+    return {
+        "llm_calls": _telemetry["llm_calls"],
+        "tokens_in": _telemetry["tokens_in"],
+        "tokens_out": _telemetry["tokens_out"],
+        "tool_calls": dict(_telemetry["tool_calls"]),
+    }
 
 
 def reset_telemetry() -> None:
-    for k in _telemetry:
-        _telemetry[k] = 0
+    _telemetry["llm_calls"] = 0
+    _telemetry["tokens_in"] = 0
+    _telemetry["tokens_out"] = 0
+    _telemetry["tool_calls"] = {}
 
 
 def cache_key(*args, **kwargs) -> str:

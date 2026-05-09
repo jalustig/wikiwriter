@@ -5,7 +5,7 @@ import random
 import httpx
 from bs4 import BeautifulSoup
 
-from cache import cached
+from cache import cached, record_tool_call
 from tools.wayback import get_archive_url
 
 _MIN_BODY_CHARS = 200
@@ -93,6 +93,7 @@ def _html_to_text(html: str) -> str:
 @cached("page_fetch", ttl=7 * 24 * 3600)
 async def fetch_raw(url: str) -> tuple[str, str]:
     """Returns (content_type, raw_content). Raises on HTTP error."""
+    record_tool_call("fetch")
     async with httpx.AsyncClient(follow_redirects=True, timeout=15, headers=_HEADERS) as client:
         resp = await client.get(url)
         resp.raise_for_status()

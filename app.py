@@ -328,12 +328,15 @@ def run_and_render(url: str) -> None:
 
     def _refresh_telemetry():
         tel = get_telemetry()
+        tool_calls: dict = tel["tool_calls"]
+        total_tools = sum(tool_calls.values())
         parts = [
             f"🔢 **{tel['llm_calls']}** LLM calls",
             f"🪙 **{tel['tokens_in'] + tel['tokens_out']:,}** tokens ({tel['tokens_in']:,} in / {tel['tokens_out']:,} out)",
         ]
-        if tel["tool_calls"]:
-            parts.append(f"🔧 **{tel['tool_calls']}** tool calls")
+        if total_tools:
+            breakdown = " · ".join(f"{k}: {v}" for k, v in sorted(tool_calls.items()))
+            parts.append(f"🛠️ **{total_tools}** tool calls total ({breakdown})")
         telemetry_ph.markdown(
             "<div style='padding:6px 12px;background:#F1F5F9;border-top:1px solid #E2E8F0;"
             "font-size:0.82rem;color:#475569;'>" + " &nbsp;·&nbsp; ".join(parts) + "</div>",

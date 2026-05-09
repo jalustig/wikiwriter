@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import cache, cache_key, record_llm_call
+from cache import cache, cache_key, record_llm_start, record_llm_tokens
 from models import ArticleAssessment, CritiqueResult, TaskNode
 from dag import build_dag
 
@@ -70,13 +70,14 @@ async def plan_edits(
         revision_context=_revision_context(critique),
     )
 
+    record_llm_start()
     response = await _client.chat.completions.create(
         model=_MODEL,
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
         temperature=0.2,
     )
-    record_llm_call(response.usage)
+    record_llm_tokens(response.usage)
 
     raw = json.loads(response.choices[0].message.content)
     tasks = raw.get("tasks", [])

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import cache, cache_key, record_llm_call
+from cache import cache, cache_key, record_llm_start, record_llm_tokens
 from models import WikiArticle, ArticleSummary, SectionResearch, Claim, SourceEvaluation
 from tools.search import search
 from workers.source_evaluator import SourceEvaluator
@@ -71,12 +71,13 @@ async def _rank_urls(
     )
 
     try:
+        record_llm_start()
         response = await _client.chat.completions.create(
             model=_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
         )
-        record_llm_call(response.usage)
+        record_llm_tokens(response.usage)
         content = response.choices[0].message.content.strip()
         # Extract JSON array from response
         import re

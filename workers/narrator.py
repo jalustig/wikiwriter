@@ -7,7 +7,7 @@ from typing import AsyncGenerator
 
 from openai import AsyncOpenAI
 
-from cache import record_llm_call
+from cache import record_llm_start, record_llm_tokens
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 _PROMPT = (Path(__file__).parent.parent / "prompts" / "narrator.txt").read_text()
@@ -21,6 +21,7 @@ async def narrate(stage: str, context_dict: dict) -> AsyncGenerator[str, None]:
     prompt = _PROMPT.replace("{stage}", stage).replace("{context}", context_text)
 
     try:
+        record_llm_start()
         stream = await _client.chat.completions.create(
             model=_MODEL,
             messages=[{"role": "user", "content": prompt}],
@@ -50,7 +51,7 @@ async def narrate(stage: str, context_dict: dict) -> AsyncGenerator[str, None]:
         if remainder:
             yield remainder
 
-        record_llm_call(usage)
+        record_llm_tokens(usage)
 
     except Exception as e:
         import sys

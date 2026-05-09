@@ -9,7 +9,7 @@ from pathlib import Path
 import openai
 from dotenv import load_dotenv
 
-from cache import cache, cache_key, record_llm_call
+from cache import cache, cache_key, record_llm_start, record_llm_tokens
 from models import SourceEvaluation, ArticleSummary
 from tools.fetcher import fetch_readable
 from tools.wayback import get_archive_url
@@ -86,6 +86,7 @@ class SourceEvaluator:
 
         for attempt in range(3):
             try:
+                record_llm_start()
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
@@ -97,7 +98,7 @@ class SourceEvaluator:
                 if attempt == 2:
                     raise
                 await asyncio.sleep(2 ** attempt)
-        record_llm_call(response.usage)
+        record_llm_tokens(response.usage)
 
         data = json.loads(response.choices[0].message.content)
         scores = data.get("scores", {})

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import record_llm_call
+from cache import record_llm_start, record_llm_tokens
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 _PROMPT = (Path(__file__).parent.parent / "prompts" / "stage_summary.txt").read_text()
@@ -19,13 +19,14 @@ async def summarize_stage(stage: str, context: dict) -> str:
     context_text = json.dumps(context, indent=2, default=str)
     prompt = _PROMPT.replace("{stage}", stage).replace("{context}", context_text)
     try:
+        record_llm_start()
         response = await _client.chat.completions.create(
             model=_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_completion_tokens=150,
             temperature=0.4,
         )
-        record_llm_call(response.usage)
+        record_llm_tokens(response.usage)
         return response.choices[0].message.content.strip()
     except Exception as e:
         import sys

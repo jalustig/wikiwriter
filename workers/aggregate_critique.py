@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import cache, cache_key, record_llm_call
+from cache import cache, cache_key, record_llm_start, record_llm_tokens
 from models import SectionCritiqueResult, CritiqueResult
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -60,13 +60,14 @@ async def aggregate_critique(
         section_results=_format_section_results(section_results),
     )
 
+    record_llm_start()
     response = await _client.chat.completions.create(
         model=_MODEL,
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
         temperature=0.1,
     )
-    record_llm_call(response.usage)
+    record_llm_tokens(response.usage)
 
     raw = json.loads(response.choices[0].message.content)
 

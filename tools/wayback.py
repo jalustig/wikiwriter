@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 import asyncio
-from cache import cache_key, cache
+from cache import cache_key, cache, record_tool_call
 
 
 async def get_archive_url(url: str) -> str | None:
@@ -11,6 +11,7 @@ async def get_archive_url(url: str) -> str | None:
     key = f"wayback:{cache_key(url)}"
     if key in cache:
         return cache[key]
+    record_tool_call("wayback")
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, _wayback_lookup_sync, url)
     cache.set(key, result, expire=7 * 24 * 3600)

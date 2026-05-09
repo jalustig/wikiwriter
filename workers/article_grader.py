@@ -7,7 +7,7 @@ import openai
 from pathlib import Path
 from dotenv import load_dotenv
 
-from cache import cache, cache_key, record_llm_call
+from cache import cache, cache_key, record_llm_start, record_llm_tokens
 from models import WikiArticle, ContentGrade
 
 DIMENSION_WEIGHTS = {
@@ -61,12 +61,13 @@ class ArticleGrader:
 
         prompt = _build_grader_prompt(article.title, article.wikitext)
 
+        record_llm_start()
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
-        record_llm_call(response.usage)
+        record_llm_tokens(response.usage)
 
         data = json.loads(response.choices[0].message.content)
 

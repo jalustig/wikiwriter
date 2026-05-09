@@ -8,7 +8,7 @@ import mwparserfromhell
 import wikipediaapi
 from urllib.parse import unquote
 
-from cache import cache_key, cache
+from cache import cache_key, cache, record_tool_call
 from models import WikiArticle, Citation
 
 MEDIAWIKI_API = "https://en.wikipedia.org/w/api.php"
@@ -98,6 +98,7 @@ async def fetch_article(url: str) -> WikiArticle:
     if cache_ns in cache:
         return WikiArticle.model_validate(cache[cache_ns])
 
+    record_tool_call("wikipedia")
     title = _title_from_url(url)
 
     # Fetch wikitext (for citations) and extlinks (all external URLs) in parallel
@@ -157,6 +158,7 @@ async def fetch_edit_history(title: str) -> list[dict]:
     if cache_ns in cache:
         return cache[cache_ns]
 
+    record_tool_call("wikipedia")
     async with httpx.AsyncClient(headers=HEADERS, timeout=30) as client:
         resp = await client.get(MEDIAWIKI_API, params={
             "action": "query", "titles": title,
@@ -177,6 +179,7 @@ async def fetch_talk_page(title: str) -> str:
     if cache_ns in cache:
         return cache[cache_ns]
 
+    record_tool_call("wikipedia")
     talk_title = f"Talk:{title}"
     page_titles = [talk_title] + [f"{talk_title}/Archive {n}" for n in range(1, 6)]
     texts: list[str] = []
