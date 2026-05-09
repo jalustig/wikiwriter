@@ -7,7 +7,7 @@ import openai
 from pathlib import Path
 from dotenv import load_dotenv
 
-from cache import cache, cache_key
+from cache import cache, cache_key, record_llm_call
 from models import WikiArticle, ContentGrade
 
 DIMENSION_WEIGHTS = {
@@ -66,6 +66,7 @@ class ArticleGrader:
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
+        record_llm_call(response.usage)
 
         data = json.loads(response.choices[0].message.content)
 

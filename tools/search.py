@@ -5,7 +5,7 @@ import asyncio
 import os
 from dotenv import load_dotenv
 
-from cache import cached
+from cache import cached, record_tool_call
 
 load_dotenv()
 _TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
@@ -16,6 +16,7 @@ async def search(query: str, max_results: int = 5) -> list[dict]:
     """Search the web via Tavily. Returns list of {url, title, content} dicts."""
     from tavily import TavilyClient
 
+    record_tool_call()
     client = TavilyClient(api_key=_TAVILY_API_KEY)
     loop = asyncio.get_event_loop()
     response = await loop.run_in_executor(

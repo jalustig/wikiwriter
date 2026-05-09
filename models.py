@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 class ProgressEvent(BaseModel):
     stage: str
-    status: Literal["running", "done", "error", "thinking"]
+    status: Literal["running", "done", "error", "thinking", "summary"]
     message: str
     data: dict | None = None
     count: int | None = None   # current item in a batch

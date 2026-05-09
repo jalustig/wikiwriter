@@ -30,6 +30,7 @@ from workers.aggregate_critique import aggregate_critique
 from workers.summarize_edit import summarize_edit
 from workers.output_grader import OutputGrader
 from workers.narrator import narrate
+from workers.stage_summarizer import summarize_stage
 
 
 def _inject_revision_notes(
@@ -56,6 +57,13 @@ async def _narrate(stage: str, context: dict):
     """Yield a stream of thinking ProgressEvents from the narrator, line by line."""
     async for thought in narrate(stage, context):
         yield _think(stage, thought)
+
+
+async def _emit_summary(stage: str, context: dict):
+    """Yield a summary ProgressEvent for the completed stage."""
+    text = await summarize_stage(stage, context)
+    if text:
+        yield ProgressEvent(stage=stage, status="summary", message=text)
 
 
 def _assemble_source_report(
@@ -148,6 +156,14 @@ class WikiWriterOrchestrator:
             "intro_text": next((v for k, v in article.section_texts.items() if not k), "")[:1200],
         }):
             yield t
+        async for s in _emit_summary("fetch", {
+            "article_title": article.title,
+            "assessment_class": article.assessment_class or "unrated",
+            "n_sections": len(article.sections),
+            "n_citations": len(article.citations),
+            "sections": article.sections[:12],
+        }):
+            yield s
         yield ProgressEvent(
             stage="FETCH", status="done",
             message=(
@@ -215,6 +231,19 @@ class WikiWriterOrchestrator:
         }):
             yield t
 
+        async for s in _emit_summary("gather", {
+            "article_title": article.title,
+            "grade": content_grade.letter_grade,
+            "score": content_grade.overall_score,
+            "dimension_scores": content_grade.dimension_scores,
+            "caution_level": environment.caution_level,
+            "n_sources_usable": n_usable,
+            "n_sources_dead": n_dead,
+            "n_sources_total": len(source_evals),
+            "flip_flopped_sections": environment.flip_flopped_sections,
+            "active_disputes": environment.active_disputes,
+        }):
+            yield s
         yield ProgressEvent(
             stage="GATHER", status="done",
             message=f"Grade: {content_grade.letter_grade} ({content_grade.overall_score:.1f}) | "
@@ -249,6 +278,19 @@ class WikiWriterOrchestrator:
             "sections_skipped": [s.name for s in assessment.sections if s.action == "SKIP"],
         }):
             yield t
+        async for s in _emit_summary("assess", {
+            "article_title": article.title,
+            "importance": assessment.importance.tier,
+            "article_class": assessment.article_class,
+            "effort_ceiling": assessment.effort_ceiling,
+            "edit_rationale": assessment.edit_rationale,
+            "primary_weaknesses": assessment.primary_weaknesses,
+            "sections_to_edit": [
+                {"name": s2.name, "edit_type": s2.edit_type, "rationale": s2.rationale}
+                for s2 in sections_to_edit
+            ],
+        }):
+            yield s
         yield ProgressEvent(
             stage="ASSESS", status="done",
             message=f"{assessment.importance.tier} | {assessment.article_class} | "
@@ -313,6 +355,17 @@ class WikiWriterOrchestrator:
                 ],
             }):
                 yield t
+            async for s in _emit_summary("plan", {
+                "article_title": article.title,
+                "cycle": cycle,
+                "n_tasks": len(nodes),
+                "narrative": narrative,
+                "tasks": [
+                    {"id": nid, "type": n.type, "params": n.params}
+                    for nid, n in nodes.items()
+                ],
+            }):
+                yield s
             yield ProgressEvent(
                 stage="PLAN", status="done",
                 message=f"{len(nodes)} tasks planned{cycle_label}",
@@ -398,6 +451,21 @@ class WikiWriterOrchestrator:
                 existing.update(section_draft_map)
                 all_section_drafts = list(existing.values())
 
+            async for s in _emit_summary("exec", {
+                "article_title": article.title,
+                "cycle": cycle,
+                "n_sections_drafted": len(cycle_drafts),
+                "sections": [
+                    {
+                        "name": d.section_name,
+                        "changes": d.changes_made[:3],
+                        "citations_added": len(d.citations_added),
+                        "citations_removed": len(d.citations_removed),
+                    }
+                    for d in cycle_drafts
+                ],
+            }):
+                yield s
             yield ProgressEvent(
                 stage="EXEC", status="done",
                 message=f"{len(cycle_drafts)} sections drafted",
@@ -444,6 +512,15 @@ class WikiWriterOrchestrator:
             }):
                 yield t
 
+            async for s in _emit_summary("critique", {
+                "article_title": article.title,
+                "cycle": cycle,
+                "overall_verdict": final_critique.overall_verdict,
+                "passing_sections": final_critique.passing_sections,
+                "failing_sections": final_critique.failing_sections,
+                "revision_instructions": final_critique.revision_instructions[:3],
+            }):
+                yield s
             yield ProgressEvent(
                 stage="CRITIQUE", status="done",
                 message=f"Verdict: {final_critique.overall_verdict}",
@@ -501,6 +578,15 @@ class WikiWriterOrchestrator:
         yield ProgressEvent(stage="GRADE", status="running", message="Scoring the final output...")
         output_grade = await self.output_grader.run(assembled, article)
         quality_delta = output_grade.overall_score - content_grade.overall_score
+        async for s in _emit_summary("grade", {
+            "article_title": article.title,
+            "input_grade": content_grade.letter_grade,
+            "input_score": content_grade.overall_score,
+            "output_grade": output_grade.letter_grade,
+            "output_score": output_grade.overall_score,
+            "quality_delta": quality_delta,
+        }):
+            yield s
         yield ProgressEvent(
             stage="GRADE", status="done",
             message=f"Output: {output_grade.letter_grade} (Δ {quality_delta:+.1f})",

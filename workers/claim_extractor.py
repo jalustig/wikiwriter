@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import cache_key, cache
+from cache import cache_key, cache, record_llm_call
 from models import WikiArticle, ImprovementPlan, Claim, ClaimMap
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -64,6 +64,7 @@ class ClaimExtractor:
                 response_format={"type": "json_object"},
                 temperature=0.1,
             )
+            record_llm_call(response.usage)
 
             raw = json.loads(response.choices[0].message.content)
             for item in raw.get("claims", []):

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import cache_key, cache
+from cache import cache_key, cache, record_llm_call
 from models import WikiArticle, SectionDraft
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -60,6 +60,7 @@ class SynthesisWriter:
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
         )
+        record_llm_call(response.usage)
         result = response.choices[0].message.content.strip()
         cache.set(cache_ns, result, expire=3600)
         return result

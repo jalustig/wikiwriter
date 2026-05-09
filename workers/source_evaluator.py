@@ -8,7 +8,7 @@ from pathlib import Path
 import openai
 from dotenv import load_dotenv
 
-from cache import cache, cache_key
+from cache import cache, cache_key, record_llm_call
 from models import SourceEvaluation, ArticleSummary
 from tools.fetcher import fetch_readable
 from tools.wayback import get_archive_url
@@ -88,6 +88,7 @@ class SourceEvaluator:
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
+        record_llm_call(response.usage)
 
         data = json.loads(response.choices[0].message.content)
         scores = data.get("scores", {})

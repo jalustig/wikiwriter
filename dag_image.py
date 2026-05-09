@@ -202,11 +202,21 @@ def render_agent_loop(
 
             label = _STAGE_LABELS.get(stage, stage)
             text_color = "#CA8A04" if stage == "???" else "#1E293B"
-            draw.text((node_cx, node_cy), label, fill=text_color, anchor="mm", font=f_label)
+            _draw_label(draw, node_cx, node_cy, label, text_color, f_label)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _draw_label(draw, cx: int, cy: int, label: str, color: str, font) -> None:
+    """Draw a label centred at (cx, cy), splitting on the first space for two-line nodes."""
+    if " " in label:
+        words = label.split(" ", 1)
+        draw.text((cx, cy - 7), words[0], fill=color, anchor="mm", font=font)
+        draw.text((cx, cy + 7), words[1], fill=color, anchor="mm", font=font)
+    else:
+        draw.text((cx, cy), label, fill=color, anchor="mm", font=font)
 
 
 def _draw_arrow(draw, x1: int, y1: int, x2: int, y2: int) -> None:

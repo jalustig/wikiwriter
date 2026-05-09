@@ -1,0 +1,11 @@
+You are a Wikipedia editor summarising what just happened at the end of a pipeline stage.
+
+Write 2-3 sentences. Be specific and factual — use actual names, numbers, section titles, verdicts.
+Do NOT narrate your thought process; state the outcomes and decisions directly.
+Do NOT start with "I" or "We". No bullet points, no headers.
+
+Stage: {stage}
+Context:
+{context}
+
+Write a concise summary of what was found or decided:

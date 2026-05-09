@@ -7,6 +7,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
+from cache import record_llm_call
 from models import ArticleAssessment, TaskNode
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -47,6 +48,7 @@ async def validate_plan(
         response_format={"type": "json_object"},
         temperature=0.1,
     )
+    record_llm_call(response.usage)
 
     raw = json.loads(response.choices[0].message.content)
     approved = raw.get("verdict") == "APPROVE"

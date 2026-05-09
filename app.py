@@ -255,11 +255,6 @@ def run_and_render(url: str) -> None:
         st.markdown("---")
         st.markdown("#### Task DAG")
         dag_ph = st.empty()
-        st.markdown("---")
-        status_ph = st.empty()   # spinner + current thought + elapsed time
-        counter_ph = st.empty()  # batch progress (source evaluation etc.)
-        st.markdown("---")
-        telemetry_ph = st.empty()
 
     # Render initial agent loop image (all pending)
     loop_ph.image(render_agent_loop([], None, set(), 0), width="stretch")
@@ -267,12 +262,17 @@ def run_and_render(url: str) -> None:
     # ── Main tabs ──────────────────────────────────────────────────────────────
     tab_run, tab_debug = st.tabs(["▶ Run", "🔬 Debug"])
 
-    # Pre-allocate one placeholder per pipeline stage inside tab_run
+    # Pre-allocate placeholders inside tab_run: one per stage + status + counter
     with tab_run:
         stage_phs = {stage: st.empty() for stage in _PIPELINE_STAGES}
+        status_ph = st.empty()   # spinner + current thought + elapsed time
+        counter_ph = st.empty()  # batch progress (source evaluation etc.)
 
     with tab_debug:
         debug_ph = st.empty()
+
+    # Bottom status bar (full width, outside tabs)
+    telemetry_ph = st.empty()
 
     # ── Mutable state ──────────────────────────────────────────────────────────
     state = {
@@ -281,6 +281,7 @@ def run_and_render(url: str) -> None:
         "done_stages": set(),
         "loop_count": 0,
         "stage_thoughts": {s: [] for s in _PIPELINE_STAGES},
+        "stage_summaries": {},
         "accumulated": {},
         "task_dag": {},
         "done_nodes": set(),
@@ -302,14 +303,17 @@ def run_and_render(url: str) -> None:
 
     def _refresh_telemetry():
         tel = get_telemetry()
-        with telemetry_ph.container():
-            st.caption(
-                f"🔢 **{tel['llm_calls']}** LLM calls · "
-                f"**{tel['tokens_in'] + tel['tokens_out']:,}** tokens "
-                f"({tel['tokens_in']:,} in / {tel['tokens_out']:,} out)"
-            )
-            if tel["tool_calls"]:
-                st.caption(f"🔧 **{tel['tool_calls']}** tool calls")
+        parts = [
+            f"🔢 **{tel['llm_calls']}** LLM calls",
+            f"🪙 **{tel['tokens_in'] + tel['tokens_out']:,}** tokens ({tel['tokens_in']:,} in / {tel['tokens_out']:,} out)",
+        ]
+        if tel["tool_calls"]:
+            parts.append(f"🔧 **{tel['tool_calls']}** tool calls")
+        telemetry_ph.markdown(
+            "<div style='padding:6px 12px;background:#F1F5F9;border-top:1px solid #E2E8F0;"
+            "font-size:0.82rem;color:#475569;'>" + " &nbsp;·&nbsp; ".join(parts) + "</div>",
+            unsafe_allow_html=True,
+        )
 
     def _refresh_loop_image():
         png = render_agent_loop(
@@ -334,13 +338,17 @@ def run_and_render(url: str) -> None:
         if ph is None:
             return
         thoughts = state["stage_thoughts"].get(stage, [])
+        summary = state["stage_summaries"].get(stage)
         is_done = stage in state["done_stages"]
-        _, running_label, done_label = STAGE_META.get(stage, ("•", stage, stage))
+        icon, running_label, done_label = STAGE_META.get(stage, ("•", stage, stage))
 
         with ph.container():
             if is_done:
+                st.markdown(f"**{icon} {done_label}**")
+                if summary:
+                    st.info(summary)
                 if thoughts:
-                    with st.expander(f"💭 {done_label} — thinking (expand)", expanded=False):
+                    with st.expander("💭 Thinking (expand)", expanded=False):
                         st.markdown("\n\n".join(thoughts))
                 render_stage_results(stage, state["accumulated"])
             else:
@@ -424,10 +432,9 @@ def run_and_render(url: str) -> None:
         async for event in WikiWriterOrchestrator().run(url):
             stage = event.stage
 
-            # Stage transition bookkeeping — only on non-thinking events so that
-            # narrator thoughts (emitted with lowercase stage names) don't corrupt
-            # the canonical uppercase stage state used for the agent loop image.
-            if event.status != "thinking" and stage != state["current_stage"]:
+            # Stage transition bookkeeping — only on structural events so that
+            # narrator thoughts and summaries don't corrupt the canonical stage state.
+            if event.status not in ("thinking", "summary") and stage != state["current_stage"]:
                 if stage in state["done_stages"]:
                     state["loop_count"] += 1
                 state["current_stage"] = stage
@@ -480,6 +487,12 @@ def run_and_render(url: str) -> None:
                 _refresh_loop_image()
                 _refresh_stage_ph(stage)
                 _render_debug(state["accumulated"])
+
+            elif event.status == "summary":
+                effective_stage = state["current_stage"] or stage
+                state["stage_summaries"][effective_stage] = event.message
+                _refresh_stage_ph(effective_stage)
+                _refresh_telemetry()
 
             elif event.status == "error":
                 _append_thought(stage, f"❌ **{event.message}**")

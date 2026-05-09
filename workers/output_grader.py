@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import cache_key, cache
+from cache import cache_key, cache, record_llm_call
 from models import WikiArticle, ContentGrade
 from workers.article_grader import DIMENSION_WEIGHTS, _letter_grade
 
@@ -33,6 +33,7 @@ class OutputGrader:
             response_format={"type": "json_object"},
             temperature=0.1,
         )
+        record_llm_call(response.usage)
 
         raw = json.loads(response.choices[0].message.content)
         dimension_scores: dict[str, float] = {

@@ -13,7 +13,7 @@ from typing import Optional
 import openai
 from dotenv import load_dotenv
 
-from cache import cache, cache_key
+from cache import cache, cache_key, record_llm_call
 from models import WikiArticle, EditorialRiskProfile, EditorialEnvironment
 from tools.wikipedia import fetch_edit_history, fetch_talk_page
 
@@ -206,4 +206,5 @@ class EditorialContextAnalyzer:
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
+        record_llm_call(response.usage)
         return json.loads(response.choices[0].message.content)

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import cache, cache_key
+from cache import cache, cache_key, record_llm_call
 from models import SectionCritiqueResult, DimensionCritique
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -68,6 +68,7 @@ async def critique_section(
         response_format={"type": "json_object"},
         temperature=0.1,
     )
+    record_llm_call(response.usage)
 
     raw = json.loads(response.choices[0].message.content)
 

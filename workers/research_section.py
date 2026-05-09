@@ -8,7 +8,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import cache, cache_key
+from cache import cache, cache_key, record_llm_call
 from models import WikiArticle, ArticleSummary, SectionResearch, Claim, SourceEvaluation
 from tools.search import search
 from workers.source_evaluator import SourceEvaluator
@@ -76,6 +76,7 @@ async def _rank_urls(
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
         )
+        record_llm_call(response.usage)
         content = response.choices[0].message.content.strip()
         # Extract JSON array from response
         import re

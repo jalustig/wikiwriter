@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import cache, cache_key
+from cache import cache, cache_key, record_llm_call
 from models import (
     WikiArticle, ArticleSummary, ContentGrade, EditorialEnvironment,
     SourceEvaluation, ArticleAssessment, ArticleImportance, SectionDecision,
@@ -84,6 +84,7 @@ async def assess_article(
         response_format={"type": "json_object"},
         temperature=0.2,
     )
+    record_llm_call(response.usage)
 
     raw = json.loads(response.choices[0].message.content)
 

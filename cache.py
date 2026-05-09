@@ -32,6 +32,10 @@ def record_llm_call(usage=None, tool_calls: int = 0) -> None:
         _telemetry["tokens_out"] += getattr(usage, "completion_tokens", 0) or 0
 
 
+def record_tool_call() -> None:
+    _telemetry["tool_calls"] += 1
+
+
 def get_telemetry() -> dict[str, int]:
     return dict(_telemetry)
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from cache import cache, cache_key
+from cache import cache, cache_key, record_llm_call
 from models import ArticleAssessment, CritiqueResult, TaskNode
 from dag import build_dag
 
@@ -76,6 +76,7 @@ async def plan_edits(
         response_format={"type": "json_object"},
         temperature=0.2,
     )
+    record_llm_call(response.usage)
 
     raw = json.loads(response.choices[0].message.content)
     tasks = raw.get("tasks", [])
