@@ -1,8 +1,18 @@
 # ABOUTME: Tests for orchestrator revision logic — no LLM calls.
 # ABOUTME: Verifies critique feedback is injected into draft_section node params.
 
-from models import TaskNode, CritiqueResult, SectionCritiqueResult, DimensionCritique
-from orchestrator import _inject_revision_notes
+from models import TaskNode, CritiqueResult, SectionCritiqueResult, DimensionCritique, ContentGrade
+from orchestrator import _inject_revision_notes, _grade_regression_critique
+
+
+def _grade(score: float, letter: str = "B") -> ContentGrade:
+    return ContentGrade(
+        overall_score=score,
+        letter_grade=letter,
+        dimension_scores={},
+        section_grades={},
+        narrative="",
+    )
 
 
 def _failing_section(section_name: str, suggested_fix: str) -> SectionCritiqueResult:
@@ -83,3 +93,26 @@ def test_inject_skips_section_not_in_critique():
     )
     _inject_revision_notes(nodes, critique)
     assert "revision_notes" not in nodes["t1"].params
+
+
+# ── _grade_regression_critique ──────────────────────────────────────────────
+
+def test_grade_regression_critique_verdict_is_revise():
+    critique = _grade_regression_critique(_grade(7.0), _grade(5.5))
+    assert critique.overall_verdict == "REVISE"
+
+
+def test_grade_regression_critique_has_instructions():
+    critique = _grade_regression_critique(_grade(7.0), _grade(5.5))
+    assert len(critique.revision_instructions) > 0
+
+
+def test_grade_regression_critique_mentions_delta():
+    critique = _grade_regression_critique(_grade(7.0), _grade(5.5))
+    combined = " ".join(critique.revision_instructions)
+    assert "1.5" in combined or "-1.5" in combined or "dropped" in combined.lower()
+
+
+def test_grade_regression_critique_scope_is_full_article():
+    critique = _grade_regression_critique(_grade(7.0), _grade(5.5))
+    assert critique.revision_scope == "FULL_ARTICLE"
