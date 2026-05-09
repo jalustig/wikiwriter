@@ -298,9 +298,10 @@ def run_and_render(url: str) -> None:
     # ── Main tabs ──────────────────────────────────────────────────────────────
     tab_run, tab_debug = st.tabs(["▶ Run", "🔬 Debug"])
 
-    # Pre-allocate placeholders inside tab_run: one per stage + status + counter
+    # Placeholders created dynamically as stages are entered; keyed by (cycle, stage).
+    # status/counter are appended to run_container on demand too.
     with tab_run:
-        stage_phs = {stage: st.empty() for stage in _PIPELINE_STAGES}
+        run_container = st.container()
         status_ph = st.empty()   # spinner + current thought + elapsed time
         counter_ph = st.empty()  # batch progress (source evaluation etc.)
 
@@ -316,8 +317,9 @@ def run_and_render(url: str) -> None:
         "current_stage": None,
         "done_stages": set(),
         "loop_count": 0,
-        "stage_thoughts": {s: [] for s in _PIPELINE_STAGES},
-        "stage_summaries": {},
+        "stage_thoughts": {},   # keyed by (cycle, stage)
+        "stage_summaries": {},  # keyed by (cycle, stage)
+        "stage_phs": {},        # keyed by (cycle, stage) -> st.empty()
         "accumulated": {},
         "task_dag": {},
         "done_nodes": set(),
@@ -380,12 +382,24 @@ def run_and_render(url: str) -> None:
             )
             dag_ph.image(png, width="stretch")
 
+    def _ph_key(stage: str) -> tuple:
+        return (state["loop_count"], stage)
+
+    def _ensure_ph(stage: str) -> None:
+        key = _ph_key(stage)
+        if key not in state["stage_phs"]:
+            with run_container:
+                state["stage_phs"][key] = st.empty()
+        if key not in state["stage_thoughts"]:
+            state["stage_thoughts"][key] = []
+
     def _refresh_stage_ph(stage: str):
-        ph = stage_phs.get(stage)
+        key = _ph_key(stage)
+        ph = state["stage_phs"].get(key)
         if ph is None:
             return
-        thoughts = state["stage_thoughts"].get(stage, [])
-        summary = state["stage_summaries"].get(stage)
+        thoughts = state["stage_thoughts"].get(key, [])
+        summary = state["stage_summaries"].get(key)
         is_done = stage in state["done_stages"]
         icon, running_label, done_label = STAGE_META.get(stage, ("•", stage, stage))
 
@@ -404,9 +418,9 @@ def run_and_render(url: str) -> None:
                     st.markdown("\n\n".join(thoughts))
 
     def _append_thought(stage: str, text: str):
-        if stage not in state["stage_thoughts"]:
-            state["stage_thoughts"][stage] = []
-        state["stage_thoughts"][stage].append(text)
+        key = _ph_key(stage)
+        _ensure_ph(stage)
+        state["stage_thoughts"][key].append(text)
         _refresh_stage_ph(stage)
 
     def _render_debug(acc: dict) -> None:
@@ -484,12 +498,10 @@ def run_and_render(url: str) -> None:
             if event.status not in ("thinking", "summary") and stage != state["current_stage"]:
                 if stage in state["done_stages"]:
                     state["loop_count"] += 1
-                    # Clear per-stage rendering state so the second pass renders fresh
-                    state["stage_thoughts"][stage] = []
-                    state["stage_summaries"].pop(stage, None)
                     state["done_stages"].discard(stage)
                 state["current_stage"] = stage
                 state["stage_history"].append(stage)
+                _ensure_ph(stage)
                 _refresh_loop_image()
 
             if event.status == "thinking":
@@ -543,7 +555,8 @@ def run_and_render(url: str) -> None:
 
             elif event.status == "summary":
                 effective_stage = state["current_stage"] or stage
-                state["stage_summaries"][effective_stage] = event.message
+                state["stage_summaries"][_ph_key(effective_stage)] = event.message
+                _refresh_stage_ph(effective_stage)
                 _refresh_telemetry()
 
             elif event.status == "error":
