@@ -491,7 +491,6 @@ def run_and_render(url: str) -> None:
             elif event.status == "summary":
                 effective_stage = state["current_stage"] or stage
                 state["stage_summaries"][effective_stage] = event.message
-                _refresh_stage_ph(effective_stage)
                 _refresh_telemetry()
 
             elif event.status == "error":
