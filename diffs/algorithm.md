@@ -114,9 +114,24 @@ common words ("the", "and", "of") are semantically relevant.
      else → fall back to full-text lexical similarity
 3. If no URL in either → full-text lexical similarity
 ```
-Two citations to the same URL but different access-dates score 1.0 and align
-as `equal` (or `replace` if other fields differ). Two citations to different
-domains score low and are treated as independent delete + insert.
+Two citations to different domains score low and are treated as independent
+delete + insert.
+
+Two citations to the same URL always score 1.0 and are treated as a `replace`
+(even if only the access-date changed) **unless** their full wikitext is
+byte-identical, in which case they are `equal`. This means:
+
+- `equal` → URL and all fields match exactly → superscript shown in grey, no
+  footnote diff
+- `replace` → same URL, one or more fields changed (access-date, title, etc.)
+  → superscript shown in amber; footnote shows a **field-level diff** of only
+  the changed fields
+
+**Access-date-only changes:** When the URL matches and the only difference is
+the `access-date` parameter, the footnote diff highlights just that parameter.
+The prose superscript is amber (modified) to signal the citation was touched,
+but the reviewer sees immediately from the footnote that only the date changed —
+not the source itself.
 
 **Cross-kind pairs (sentence vs citation):** sim = 0.0 always. A sentence and
 a citation are never paired.
