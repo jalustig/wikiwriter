@@ -14,7 +14,7 @@ import openai
 from dotenv import load_dotenv
 
 from cache import cache, cache_key, record_llm_start, record_llm_tokens
-from models import WikiArticle, EditorialRiskProfile, EditorialEnvironment
+from models import WikiArticle, EditorialEnvironment
 from tools.wikipedia import fetch_edit_history, fetch_talk_page
 
 _BOT_PATTERN = re.compile(r'\bbot\b', re.IGNORECASE)
