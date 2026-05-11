@@ -9,6 +9,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from cache import record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 from models import WikiArticle, ArticleSummary, SectionResearch, Claim, SourceEvaluation
 from tools.search import search
 from workers.source_evaluator import SourceEvaluator
@@ -71,6 +72,7 @@ async def _rank_urls(
     )
 
     try:
+        log_llm_call("research_section", _MODEL, prompt)
         record_llm_start()
         response = await _client.chat.completions.create(
             model=_MODEL,
@@ -78,7 +80,11 @@ async def _rank_urls(
             temperature=0.1,
         )
         record_llm_tokens(response.usage)
-        content = response.choices[0].message.content.strip()
+        raw_text = response.choices[0].message.content
+        log_llm_response("research_section", raw_text,
+                         getattr(response.usage, "prompt_tokens", 0),
+                         getattr(response.usage, "completion_tokens", 0))
+        content = raw_text.strip()
         # Extract JSON array from response
         import re
         match = re.search(r'\[.*\]', content, re.DOTALL)

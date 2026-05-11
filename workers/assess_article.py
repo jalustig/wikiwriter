@@ -8,6 +8,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from cache import cache, cache_key, record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 from models import (
     WikiArticle, ArticleSummary, ContentGrade, EditorialEnvironment,
     SourceEvaluation, ArticleAssessment, ArticleImportance, SectionDecision,
@@ -166,6 +167,7 @@ async def assess_article(
         source_quality_summary=_source_quality_summary(source_evals),
     )
 
+    log_llm_call("assess_article", _MODEL, prompt)
     record_llm_start()
     response = await _client.chat.completions.create(
         model=_MODEL,
@@ -174,8 +176,11 @@ async def assess_article(
         temperature=0.2,
     )
     record_llm_tokens(response.usage)
-
-    raw = json.loads(response.choices[0].message.content)
+    raw_text = response.choices[0].message.content
+    log_llm_response("assess_article", raw_text,
+                     getattr(response.usage, "prompt_tokens", 0),
+                     getattr(response.usage, "completion_tokens", 0))
+    raw = json.loads(raw_text)
     flip_set = set(environment.flip_flopped_sections)
     result = _build_assessment(raw, flip_set)
     cache.set(key, result.model_dump(), expire=3600)

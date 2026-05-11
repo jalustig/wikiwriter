@@ -9,6 +9,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from cache import cache_key, cache, record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 from models import WikiArticle, SectionPlan, SectionDraft, SourceEvaluation
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -91,6 +92,7 @@ class DraftWriter:
             task_block=task_block,
         )
 
+        log_llm_call("draft_writer", _MODEL, prompt)
         record_llm_start()
         response = await _client.chat.completions.create(
             model=_MODEL,
@@ -99,8 +101,11 @@ class DraftWriter:
             temperature=0.3,
         )
         record_llm_tokens(response.usage)
-
-        raw = json.loads(response.choices[0].message.content)
+        raw_text = response.choices[0].message.content
+        log_llm_response("draft_writer", raw_text,
+                         getattr(response.usage, "prompt_tokens", 0),
+                         getattr(response.usage, "completion_tokens", 0))
+        raw = json.loads(raw_text)
         draft = SectionDraft(
             section_name=section_plan.name,
             original_text=section_text,
@@ -135,6 +140,7 @@ class DraftWriter:
             task_block=task_block,
         )
 
+        log_llm_call("draft_writer", _MODEL, prompt)
         record_llm_start()
         response = await _client.chat.completions.create(
             model=_MODEL,
@@ -142,4 +148,8 @@ class DraftWriter:
             temperature=0.3,
         )
         record_llm_tokens(response.usage)
-        return response.choices[0].message.content.strip()
+        raw_text = response.choices[0].message.content
+        log_llm_response("draft_writer", raw_text,
+                         getattr(response.usage, "prompt_tokens", 0),
+                         getattr(response.usage, "completion_tokens", 0))
+        return raw_text.strip()

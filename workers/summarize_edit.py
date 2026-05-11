@@ -8,6 +8,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from cache import cache, cache_key, record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 from models import WikiArticle, ArticleAssessment, SectionDraft, CritiqueResult, EditSummary
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -51,6 +52,7 @@ async def summarize_edit(
         failing_sections=", ".join(critique.failing_sections) or "none",
     )
 
+    log_llm_call("summarize_edit", _MODEL, prompt)
     record_llm_start()
     response = await _client.chat.completions.create(
         model=_MODEL,
@@ -59,8 +61,11 @@ async def summarize_edit(
         temperature=0.3,
     )
     record_llm_tokens(response.usage)
-
-    raw = json.loads(response.choices[0].message.content)
+    raw_text = response.choices[0].message.content
+    log_llm_response("summarize_edit", raw_text,
+                     getattr(response.usage, "prompt_tokens", 0),
+                     getattr(response.usage, "completion_tokens", 0))
+    raw = json.loads(raw_text)
     result = EditSummary(
         narrative=raw.get("narrative", "Edit completed."),
         sections_changed=raw.get("sections_changed", sections_changed),

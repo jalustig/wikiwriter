@@ -8,6 +8,7 @@ from typing import AsyncGenerator
 from openai import AsyncOpenAI
 
 from cache import record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 _PROMPT = (Path(__file__).parent.parent / "prompts" / "narrator.txt").read_text()
@@ -21,6 +22,7 @@ async def narrate(stage: str, context_dict: dict) -> AsyncGenerator[str, None]:
     prompt = _PROMPT.replace("{stage}", stage).replace("{context}", context_text)
 
     try:
+        log_llm_call("narrator", _MODEL, prompt)
         record_llm_start()
         stream = await _client.chat.completions.create(
             model=_MODEL,
@@ -32,6 +34,7 @@ async def narrate(stage: str, context_dict: dict) -> AsyncGenerator[str, None]:
         )
 
         buf = ""
+        full_response = ""
         usage = None
         async for chunk in stream:
             if chunk.usage is not None:
@@ -40,6 +43,7 @@ async def narrate(stage: str, context_dict: dict) -> AsyncGenerator[str, None]:
             if delta is None:
                 continue
             buf += delta
+            full_response += delta
             while "\n" in buf:
                 line, buf = buf.split("\n", 1)
                 line = line.strip()
@@ -49,9 +53,13 @@ async def narrate(stage: str, context_dict: dict) -> AsyncGenerator[str, None]:
         # yield any remaining text after the stream ends
         remainder = buf.strip()
         if remainder:
+            full_response += remainder
             yield remainder
 
         record_llm_tokens(usage)
+        log_llm_response("narrator", full_response,
+                         getattr(usage, "prompt_tokens", 0) if usage else 0,
+                         getattr(usage, "completion_tokens", 0) if usage else 0)
 
     except Exception as e:
         import sys

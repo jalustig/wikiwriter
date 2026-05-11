@@ -14,6 +14,7 @@ import openai
 from dotenv import load_dotenv
 
 from cache import cache, cache_key, record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 from models import WikiArticle, EditorialEnvironment
 from tools.wikipedia import fetch_edit_history, fetch_talk_page
 
@@ -201,6 +202,7 @@ class EditorialContextAnalyzer:
             article_title=title,
             talk_page_text=talk_text[:6000],
         )
+        log_llm_call("editorial_context", self.model, prompt)
         record_llm_start()
         response = await self.client.chat.completions.create(
             model=self.model,
@@ -208,4 +210,8 @@ class EditorialContextAnalyzer:
             response_format={"type": "json_object"},
         )
         record_llm_tokens(response.usage)
-        return json.loads(response.choices[0].message.content)
+        raw_text = response.choices[0].message.content
+        log_llm_response("editorial_context", raw_text,
+                         getattr(response.usage, "prompt_tokens", 0),
+                         getattr(response.usage, "completion_tokens", 0))
+        return json.loads(raw_text)

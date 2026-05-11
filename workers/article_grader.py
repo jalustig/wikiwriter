@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from cache import cache, cache_key, record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 from models import WikiArticle, ContentGrade
 
 DIMENSION_WEIGHTS = {
@@ -61,6 +62,7 @@ class ArticleGrader:
 
         prompt = _build_grader_prompt(article.title, article.wikitext)
 
+        log_llm_call("article_grader", self.model, prompt)
         record_llm_start()
         response = await self.client.chat.completions.create(
             model=self.model,
@@ -68,8 +70,11 @@ class ArticleGrader:
             response_format={"type": "json_object"},
         )
         record_llm_tokens(response.usage)
-
-        data = json.loads(response.choices[0].message.content)
+        raw_text = response.choices[0].message.content
+        log_llm_response("article_grader", raw_text,
+                         getattr(response.usage, "prompt_tokens", 0),
+                         getattr(response.usage, "completion_tokens", 0))
+        data = json.loads(raw_text)
 
         dimension_scores = data.get("dimension_scores", {})
         for dim in DIMENSION_WEIGHTS:

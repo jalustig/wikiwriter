@@ -8,6 +8,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from cache import cache, cache_key, record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 from models import SectionCritiqueResult, DimensionCritique
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -62,6 +63,7 @@ async def critique_section(
         article_title, section_name, original_text, revised_text, source_report
     )
 
+    log_llm_call("critique_section", _MODEL, prompt)
     record_llm_start()
     response = await _client.chat.completions.create(
         model=_MODEL,
@@ -70,8 +72,11 @@ async def critique_section(
         temperature=0.1,
     )
     record_llm_tokens(response.usage)
-
-    raw = json.loads(response.choices[0].message.content)
+    raw_text = response.choices[0].message.content
+    log_llm_response("critique_section", raw_text,
+                     getattr(response.usage, "prompt_tokens", 0),
+                     getattr(response.usage, "completion_tokens", 0))
+    raw = json.loads(raw_text)
 
     dimensions: dict[str, DimensionCritique] = {}
     for dim, data in raw.get("dimensions", {}).items():

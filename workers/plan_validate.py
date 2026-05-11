@@ -8,6 +8,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from cache import record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 from models import ArticleAssessment, TaskNode
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -42,6 +43,7 @@ async def validate_plan(
         tasks_json=tasks_json,
     )
 
+    log_llm_call("plan_validate", _MODEL, prompt)
     record_llm_start()
     response = await _client.chat.completions.create(
         model=_MODEL,
@@ -50,8 +52,11 @@ async def validate_plan(
         temperature=0.1,
     )
     record_llm_tokens(response.usage)
-
-    raw = json.loads(response.choices[0].message.content)
+    raw_text = response.choices[0].message.content
+    log_llm_response("plan_validate", raw_text,
+                     getattr(response.usage, "prompt_tokens", 0),
+                     getattr(response.usage, "completion_tokens", 0))
+    raw = json.loads(raw_text)
     approved = raw.get("verdict") == "APPROVE"
     feedback = raw.get("feedback", "")
     return approved, feedback

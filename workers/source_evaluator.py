@@ -10,6 +10,7 @@ import openai
 from dotenv import load_dotenv
 
 from cache import cache, cache_key, record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 from models import SourceEvaluation, ArticleSummary
 from tools.fetcher import fetch_readable
 from tools.wayback import get_archive_url
@@ -84,6 +85,7 @@ class SourceEvaluator:
             page_text=page_text[:6000],
         )
 
+        log_llm_call("source_evaluator", self.model, prompt)
         for attempt in range(3):
             try:
                 record_llm_start()
@@ -99,8 +101,11 @@ class SourceEvaluator:
                     raise
                 await asyncio.sleep(2 ** attempt)
         record_llm_tokens(response.usage)
-
-        data = json.loads(response.choices[0].message.content)
+        raw_text = response.choices[0].message.content
+        log_llm_response("source_evaluator", raw_text,
+                         getattr(response.usage, "prompt_tokens", 0),
+                         getattr(response.usage, "completion_tokens", 0))
+        data = json.loads(raw_text)
         scores = data.get("scores", {})
 
         for dim in SOURCE_WEIGHTS:

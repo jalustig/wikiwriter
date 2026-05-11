@@ -8,6 +8,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from cache import cache, cache_key, record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 from models import ArticleAssessment, CritiqueResult, TaskNode
 from dag import build_dag
 
@@ -71,6 +72,7 @@ async def plan_edits(
         revision_context=_revision_context(critique),
     )
 
+    log_llm_call("edit_planner", _MODEL, prompt)
     record_llm_start()
     response = await _client.chat.completions.create(
         model=_MODEL,
@@ -79,8 +81,11 @@ async def plan_edits(
         temperature=0.2,
     )
     record_llm_tokens(response.usage)
-
-    raw = json.loads(response.choices[0].message.content)
+    raw_text = response.choices[0].message.content
+    log_llm_response("edit_planner", raw_text,
+                     getattr(response.usage, "prompt_tokens", 0),
+                     getattr(response.usage, "completion_tokens", 0))
+    raw = json.loads(raw_text)
     tasks = raw.get("tasks", [])
     narrative = raw.get("narrative", "")
 

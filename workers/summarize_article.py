@@ -8,6 +8,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from cache import cache, cache_key, record_llm_start, record_llm_tokens
+from utils.log import log_llm_call, log_llm_response
 from models import WikiArticle, ArticleSummary
 
 _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -34,6 +35,7 @@ async def summarize_article(article: WikiArticle) -> ArticleSummary:
         article_text=_article_text(article),
     )
 
+    log_llm_call("summarize_article", _MODEL, prompt)
     record_llm_start()
     response = await _client.chat.completions.create(
         model=_MODEL,
@@ -42,8 +44,11 @@ async def summarize_article(article: WikiArticle) -> ArticleSummary:
         temperature=0.1,
     )
     record_llm_tokens(response.usage)
-
-    data = json.loads(response.choices[0].message.content)
+    raw_text = response.choices[0].message.content
+    log_llm_response("summarize_article", raw_text,
+                     getattr(response.usage, "prompt_tokens", 0),
+                     getattr(response.usage, "completion_tokens", 0))
+    data = json.loads(raw_text)
     result = ArticleSummary(
         topic=data.get("topic", f"{article.title} — topic not extracted"),
         scope=data.get("scope", "Scope not determined"),
