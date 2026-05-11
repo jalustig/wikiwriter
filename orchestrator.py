@@ -308,7 +308,7 @@ class WikiWriterOrchestrator:
             article, article_summary, content_grade, environment, source_evals
         )
 
-        if assessment.needs_focus and not assessment.no_edit:
+        if assessment.article_class != "STUB" and not assessment.no_edit:
             candidate_names = [s.name for s in assessment.sections if s.action == "EDIT"]
             yield ProgressEvent(
                 stage="ASSESS", status="done",

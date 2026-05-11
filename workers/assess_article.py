@@ -127,7 +127,6 @@ def _build_assessment(raw: dict, flip_flopped: set, is_final: bool = True) -> Ar
         no_edit_reason=raw.get("no_edit_reason", ""),
         would_edit_sections=would_edit,
         scope_of_work=raw.get("scope_of_work", ""),
-        needs_focus=bool(raw.get("needs_focus", False)),
     )
 
 
@@ -191,7 +190,7 @@ async def assess_article(
             "\n### Focus Instruction\n"
             "You are now making a FINAL section selection. Full text has been provided above "
             f"for these candidate sections: {', '.join(candidate_list)}.\n"
-            "Choose at most 3 of these for EDIT. Do NOT set needs_focus=true in your response.\n\n"
+            "Choose at most 3 of these for EDIT.\n\n"
         )
     else:
         article_text = _build_article_text(article)
@@ -233,7 +232,7 @@ async def assess_article(
                      getattr(response.usage, "completion_tokens", 0))
     raw = json.loads(raw_text)
     flip_set = set(environment.flip_flopped_sections)
-    is_final = focus_context is not None or raw.get("article_class") in ("STUB", "DEVELOPING")
+    is_final = focus_context is not None or raw.get("article_class") == "STUB"
     result = _build_assessment(raw, flip_set, is_final=is_final)
     cache.set(key, result.model_dump(), expire=3600)
     return result

@@ -205,21 +205,6 @@ def test_section_scores_defaults_missing_grade_to_5():
     assert "History: 5.0" in scores
 
 
-# ── needs_focus field ───────────────────────────────────────────────────────
-
-def test_needs_focus_defaults_false():
-    result = _build_assessment(_raw_normal(), flip_flopped=set())
-    assert result.needs_focus is False
-
-
-def test_needs_focus_propagates_true():
-    raw = _raw_normal()
-    raw["needs_focus"] = True
-    raw["article_class"] = "COMPLETE"
-    result = _build_assessment(raw, flip_flopped=set())
-    assert result.needs_focus is True
-
-
 # ── _build_article_text ─────────────────────────────────────────────────────
 
 def _make_wiki_article(sections, section_texts):
@@ -262,13 +247,12 @@ def test_build_article_text_all_sections_included():
         assert name in result
 
 
-# ── focused pass: needs_focus and cap behaviour ─────────────────────────────
+# ── focused pass: cap behaviour ─────────────────────────────────────────────
 
-def test_cap_not_applied_when_needs_focus_true():
-    """Pass 1 for COMPLETE article: LLM returns needs_focus=True, cap should NOT be enforced."""
+def test_cap_not_applied_on_non_final_pass():
+    """Pass 1 for COMPLETE article: cap should NOT be enforced."""
     raw = _raw_normal()
     raw["article_class"] = "COMPLETE"
-    raw["needs_focus"] = True
     raw["sections"] = [
         {"name": f"S{i}", "action": "EDIT", "edit_type": "EXPAND", "rationale": "thin"}
         for i in range(5)
@@ -282,7 +266,6 @@ def test_cap_applied_when_is_final():
     """Final pass always enforces the cap."""
     raw = _raw_normal()
     raw["article_class"] = "COMPLETE"
-    raw["needs_focus"] = False
     raw["sections"] = [
         {"name": f"S{i}", "action": "EDIT", "edit_type": "EXPAND", "rationale": "thin"}
         for i in range(5)
