@@ -13,6 +13,7 @@ _PIPELINE_ROWS = [
     "FETCH",
     ["CHECK_SOURCES", "GRADE_CONTENT", "REVIEW_CONTEXT"],
     "ASSESS",
+    "FOCUS",
     "PLAN",
     "EXEC",
     "CRITIQUE",
@@ -30,6 +31,7 @@ _STAGE_LABELS = {
     "GRADE_CONTENT":  "Grade Content",
     "REVIEW_CONTEXT": "Review Context",
     "ASSESS":         "Assess",
+    "FOCUS":          "Focus",
     "PLAN":           "Plan",
     "EXEC":           "Execute",
     "CRITIQUE":       "Critique",
@@ -43,6 +45,15 @@ _STAGE_LABELS = {
 _INITIAL_ROWS = [
     "FETCH",
     ["CHECK_SOURCES", "GRADE_CONTENT", "REVIEW_CONTEXT"],
+    "???",
+]
+
+# Shown after ASSESS completes but before PLAN: FOCUS node visible, rest still ???
+_ASSESS_FOCUS_ROWS = [
+    "FETCH",
+    ["CHECK_SOURCES", "GRADE_CONTENT", "REVIEW_CONTEXT"],
+    "ASSESS",
+    "FOCUS",
     "???",
 ]
 
@@ -95,7 +106,12 @@ def render_agent_loop(
     width: int = 210,
 ) -> bytes:
     """Render the agent loop diagram as PNG bytes for st.image()."""
-    rows = _PIPELINE_ROWS if "ASSESS" in done_stages else _INITIAL_ROWS
+    if "PLAN" in done_stages:
+        rows = _PIPELINE_ROWS
+    elif "ASSESS" in done_stages:
+        rows = _ASSESS_FOCUS_ROWS
+    else:
+        rows = _INITIAL_ROWS
 
     NW = width - 20   # node width
     NH = 32           # node height
@@ -188,6 +204,24 @@ def render_agent_loop(
                 (right_x + 4, (plan_cy + crit_cy) // 2 - 5),
                 f"loop {loop_count}", fill=edge_color, font=f_small,
             )
+
+    # ── Back-edge FOCUS → ASSESS (amber; runs at most once) ──────────────────
+    if "FOCUS" in pos and "ASSESS" in pos:
+        _, focus_cy = pos["FOCUS"]
+        _, assess_cy = pos["ASSESS"]
+        left_x = PAD - 4
+        pts = [
+            (PAD, focus_cy),
+            (left_x - 2, focus_cy),
+            (left_x - 2, assess_cy),
+            (PAD, assess_cy),
+        ]
+        draw.line(pts, fill="#CA8A04", width=2)
+        ax = PAD
+        draw.polygon(
+            [(ax - 7, assess_cy - 4), (ax - 7, assess_cy + 4), (ax, assess_cy)],
+            fill="#CA8A04",
+        )
 
     # ── Draw nodes ────────────────────────────────────────────────────────────
     for ri, row in enumerate(rows):

@@ -31,11 +31,12 @@ def test_agent_loop_with_done_stages():
 
 
 def test_agent_loop_with_back_edge():
-    png_no_loop = render_agent_loop(["FETCH"], "PLAN", {"FETCH", "GATHER", "ASSESS"}, 0)
+    done = {"FETCH", "GATHER", "ASSESS", "FOCUS", "PLAN", "EXEC", "CRITIQUE"}
+    png_no_loop = render_agent_loop(["FETCH"], "PLAN", done, 0)
     png_loop = render_agent_loop(
-        ["FETCH", "GATHER", "ASSESS", "PLAN", "EXEC", "CRITIQUE", "PLAN"],
+        ["FETCH", "GATHER", "ASSESS", "FOCUS", "PLAN", "EXEC", "CRITIQUE", "PLAN"],
         "PLAN",
-        {"FETCH", "GATHER", "ASSESS", "EXEC", "CRITIQUE"},
+        done,
         1,
     )
     assert png_loop[:4] == PNG_MAGIC
@@ -71,14 +72,15 @@ def test_task_dag_current_nodes():
 def test_agent_loop_pre_assess_shorter_than_post():
     """Before ASSESS completes, only the initial pipeline is shown (fewer nodes)."""
     png_pre = render_agent_loop(["FETCH"], "FETCH", set(), 0)
-    png_post = render_agent_loop(["FETCH", "GATHER", "ASSESS"], "PLAN", {"FETCH", "GATHER", "ASSESS"}, 0)
+    done = {"FETCH", "GATHER", "ASSESS", "FOCUS", "PLAN"}
+    png_post = render_agent_loop(["FETCH", "GATHER", "ASSESS", "FOCUS", "PLAN"], "EXEC", done, 0)
     assert _png_height(png_pre) < _png_height(png_post)
 
 
 def test_agent_loop_pre_assess_differs_from_post():
-    """After ASSESS the full pipeline appears, making a visually different image."""
+    """After PLAN the full pipeline appears, making a visually different image."""
     png_pre = render_agent_loop([], None, set(), 0)
-    png_post = render_agent_loop([], None, {"FETCH", "GATHER", "ASSESS"}, 0)
+    png_post = render_agent_loop([], None, {"FETCH", "GATHER", "ASSESS", "FOCUS", "PLAN"}, 0)
     assert png_pre != png_post
 
 
@@ -86,3 +88,33 @@ def test_task_dag_empty():
     png = render_task_dag({}, set(), set())
     assert isinstance(png, bytes)
     assert len(png) > 0
+
+
+# ── Three-state progressive reveal ─────────────────────────────────────────
+
+def test_initial_state_shows_question_marks():
+    """Before ASSESS completes, DAG shows ??? not PLAN."""
+    png = render_agent_loop([], current_stage="FETCH", done_stages=set(), loop_count=0)
+    assert png[:4] == PNG_MAGIC
+
+
+def test_assess_done_shows_focus_row():
+    """After ASSESS done but before PLAN, DAG shows FOCUS node (taller than initial)."""
+    png_initial = render_agent_loop([], current_stage="FETCH", done_stages=set(), loop_count=0)
+    png_assess_done = render_agent_loop(
+        [], current_stage="FOCUS", done_stages={"ASSESS"}, loop_count=0
+    )
+    assert png_assess_done[:4] == PNG_MAGIC
+    assert _png_height(png_assess_done) > _png_height(png_initial)
+
+
+def test_plan_done_shows_full_pipeline():
+    """After PLAN done, full pipeline rows are shown (tallest)."""
+    png_assess_done = render_agent_loop(
+        [], current_stage="FOCUS", done_stages={"ASSESS"}, loop_count=0
+    )
+    png_plan_done = render_agent_loop(
+        [], current_stage="EXEC", done_stages={"ASSESS", "FOCUS", "PLAN"}, loop_count=0
+    )
+    assert png_plan_done[:4] == PNG_MAGIC
+    assert _png_height(png_plan_done) > _png_height(png_assess_done)
