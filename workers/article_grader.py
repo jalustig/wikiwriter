@@ -23,13 +23,19 @@ DIMENSION_WEIGHTS = {
 
 
 _PROMPT_TEMPLATE = (Path(__file__).parent.parent / "prompts" / "article_grader.txt").read_text()
-_WIKITEXT_LIMIT = 12000
+_SECTION_CHAR_LIMIT = 2000
 
 
-def _build_grader_prompt(article_title: str, wikitext: str) -> str:
+def _build_grader_prompt(article: "WikiArticle") -> str:
+    parts = []
+    for name in article.sections:
+        text = article.section_texts.get(name, "")[:_SECTION_CHAR_LIMIT]
+        if text.strip():
+            parts.append(f"== {name} ==\n{text}" if name != "Lead" else text)
+    sections_text = "\n\n".join(parts)
     return _PROMPT_TEMPLATE.format(
-        article_title=article_title,
-        sections_text=wikitext[:_WIKITEXT_LIMIT],
+        article_title=article.title,
+        sections_text=sections_text,
     )
 
 
@@ -60,7 +66,7 @@ class ArticleGrader:
             cached["letter_grade"] = _letter_grade(cached["overall_score"])
             return ContentGrade.model_validate(cached)
 
-        prompt = _build_grader_prompt(article.title, article.wikitext)
+        prompt = _build_grader_prompt(article)
 
         log_llm_call("article_grader", self.model, prompt)
         record_llm_start()
