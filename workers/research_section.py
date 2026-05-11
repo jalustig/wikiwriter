@@ -118,7 +118,7 @@ async def research_section(
     uncited = [c for c in claim_map.claims if c.status in ("uncited", "undercited")]
 
     if not uncited:
-        return SectionResearch(section_name=section_name, claim_map=claim_map, new_sources=[])
+        return SectionResearch(section_name=section_name, claim_map=claim_map.model_dump(), new_sources=[])
 
     # Step 2: Find sources for uncited claims
     evaluator = SourceEvaluator()
@@ -150,7 +150,7 @@ async def research_section(
             evals = await asyncio.gather(*eval_tasks, return_exceptions=True)
             usable = [
                 e for e in evals
-                if isinstance(e, SourceEvaluation) and e.status != "DEAD"
+                if not isinstance(e, Exception) and e.status != "DEAD"
                 and e.recommendation in ("USE", "WEAK")
             ]
 
@@ -171,6 +171,6 @@ async def research_section(
 
     return SectionResearch(
         section_name=section_name,
-        claim_map=claim_map,
+        claim_map=claim_map.model_dump(),
         new_sources=top_sources,
     )
