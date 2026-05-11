@@ -1,5 +1,5 @@
 # ABOUTME: Central log utility — writes timestamped human-readable entries to a per-run .log file.
-# ABOUTME: All writes are atomic (threading.Lock). Silent no-op when no sink is configured.
+# ABOUTME: Uses ContextVar for per-run sink isolation; Lock ensures atomic multi-line entries.
 
 import json
 import threading
@@ -17,6 +17,18 @@ def set_log_sink(path: str) -> None:
     f = open(path, "w", buffering=1)  # line-buffered
     _sink.set(f)
     _sink_path.set(path)
+
+
+def close_log_sink() -> None:
+    """Close the active log sink and clear the context vars."""
+    f = _sink.get()
+    if f is not None:
+        try:
+            f.close()
+        except OSError:
+            pass
+    _sink.set(None)
+    _sink_path.set(None)
 
 
 def get_log_path() -> str | None:
@@ -53,9 +65,9 @@ def log_stage_event(stage: str, kind: str, message: str = "") -> None:
 
 
 def log_llm_call(worker: str, model: str, prompt: str) -> None:
-    header = f"LLM_CALL worker={worker} model={model}"
-    _write(_format_block(header, None))
-    _write(_format_block("PROMPT", prompt))
+    header = f"[{_ts()}] LLM_CALL worker={worker} model={model}\n\n"
+    prompt_block = _format_block("PROMPT", prompt)
+    _write(header + prompt_block)
 
 
 def log_llm_response(worker: str, response_text: str, tokens_in: int, tokens_out: int) -> None:

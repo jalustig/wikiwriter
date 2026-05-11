@@ -8,14 +8,15 @@ import utils.log as log_mod
 
 def _make_sink():
     """Return a StringIO that acts as the log sink."""
-    f = io.StringIO()
-    f.flush = lambda: None  # StringIO has no real flush
-    return f
+    return io.StringIO()
 
 
 def setup_function():
-    log_mod._sink.set(None)
-    log_mod._sink_path.set(None)
+    log_mod.close_log_sink()
+
+
+def teardown_function():
+    log_mod.close_log_sink()
 
 
 def test_silent_when_no_sink():
@@ -78,6 +79,3 @@ def test_set_log_sink_sets_path(tmp_path):
     with open(p) as fh:
         contents = fh.read()
     assert "STAGE_START FETCH" in contents
-    log_mod._sink.get().close()
-    log_mod._sink.set(None)
-    log_mod._sink_path.set(None)
