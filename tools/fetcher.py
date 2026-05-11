@@ -2,6 +2,7 @@
 # ABOUTME: Falls back to stealth Playwright for JS-rendered/CAPTCHA-gated pages; Wayback for dead URLs.
 
 import logging
+import os
 import random
 import httpx
 from bs4 import BeautifulSoup
@@ -183,8 +184,13 @@ async def fetch_readable(url: str) -> str:
     # archive-substituted URLs as PDFs when the original returned an error page.
     is_pdf = "application/pdf" in content_type or (fetched_original and url.lower().endswith(".pdf"))
     if is_pdf:
-        from tools.pdf import extract_pdf_text
-        return await extract_pdf_text(url)
+        from tools.academic import repo_pdf_local_path, _save_pdf_to_path
+        from tools.pdf import extract_pdf_text, fetch_pdf_bytes
+        local_path = repo_pdf_local_path(url)
+        if local_path and not os.path.exists(local_path):
+            pdf_bytes = await fetch_pdf_bytes(url)
+            _save_pdf_to_path(local_path, pdf_bytes)
+        return await extract_pdf_text(local_path if local_path else url)
 
     # For DOI URLs, search the landing page for an open-access PDF
     if doi and html:

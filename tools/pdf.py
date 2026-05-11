@@ -38,6 +38,14 @@ def _extract_from_bytes(pdf_bytes: bytes) -> str:
     return "\n\n".join(pages)
 
 
+async def fetch_pdf_bytes(url: str) -> bytes:
+    """Fetch PDF bytes from a URL."""
+    async with httpx.AsyncClient(headers=_HEADERS, timeout=30) as client:
+        resp = await client.get(url, follow_redirects=True)
+        resp.raise_for_status()
+        return resp.content
+
+
 @cached("page_text", ttl=7 * 24 * 3600)
 async def extract_pdf_text(source: str) -> str:
     """Extract text from a PDF file path or URL. Returns up to 8000 chars."""

@@ -7,7 +7,8 @@
 # should only be attempted after all structured API sources are exhausted.
 
 import os
-from urllib.parse import urljoin, unquote
+import re
+from urllib.parse import urljoin, unquote, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -25,6 +26,40 @@ _HEADERS = {
 }
 
 PAPERS_DIR = os.getenv("PAPERS_DIR", "papers")
+
+
+def repo_pdf_local_path(url: str) -> str | None:
+    """
+    Return a local papers/ path for PDFs from known repositories, or None.
+    Handles arxiv, biorxiv, medrxiv, and semanticscholar URLs.
+    """
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path
+
+    if "arxiv.org" in host:
+        # /pdf/1808.10000, /pdf/1808.10000.pdf, /pdf/1808.10000v2
+        m = re.search(r"/pdf/([0-9]+\.[0-9]+)", path)
+        if m:
+            paper_id = m.group(1)
+            return os.path.join(PAPERS_DIR, f"arxiv_{paper_id}.pdf")
+
+    if "biorxiv.org" in host or "medrxiv.org" in host:
+        prefix = "biorxiv" if "biorxiv" in host else "medrxiv"
+        # /content/10.1101/2020.07.15.204107v2.full.pdf → 10.1101_2020.07.15.204107
+        m = re.search(r"/(10\.\d{4}/[^v]+?)(?:v\d+)?(?:\.full)?(?:\.pdf)?$", path)
+        if m:
+            safe = m.group(1).replace("/", "_")
+            return os.path.join(PAPERS_DIR, f"{prefix}_{safe}.pdf")
+
+    if "semanticscholar.org" in host:
+        # pdfs.semanticscholar.org/4544/1baeb5af7fb4f2d9bd7b634ee6a1f9e36775.pdf
+        m = re.search(r"/([0-9a-f]+)/([0-9a-f]+)\.pdf$", path)
+        if m:
+            paper_id = m.group(1) + m.group(2)
+            return os.path.join(PAPERS_DIR, f"semanticscholar_{paper_id}.pdf")
+
+    return None
 
 
 def doi_to_local_path(doi: str) -> str:
@@ -46,6 +81,13 @@ def _save_pdf(doi: str, pdf_bytes: bytes) -> str:
     with open(path, "wb") as f:
         f.write(pdf_bytes)
     return path
+
+
+def _save_pdf_to_path(path: str, pdf_bytes: bytes) -> None:
+    """Write PDF bytes to an explicit path, creating parent directories as needed."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(pdf_bytes)
 
 
 def _extract_citation_pdf_url(html: str) -> str | None:

@@ -3,9 +3,52 @@
 
 from tools.academic import (
     doi_to_local_path,
+    repo_pdf_local_path,
     _extract_citation_pdf_url,
     _candidate_pdf_links,
 )
+
+
+# --- repo_pdf_local_path ---
+
+def test_repo_pdf_local_path_arxiv_plain_id():
+    assert repo_pdf_local_path("https://arxiv.org/pdf/1808.10000") == "papers/arxiv_1808.10000.pdf"
+
+
+def test_repo_pdf_local_path_arxiv_with_dot_pdf():
+    assert repo_pdf_local_path("https://arxiv.org/pdf/1808.10000.pdf") == "papers/arxiv_1808.10000.pdf"
+
+
+def test_repo_pdf_local_path_arxiv_with_query_string():
+    assert repo_pdf_local_path(
+        "https://arxiv.org/pdf/1808.10000.pdf?source=post_page---------------------------"
+    ) == "papers/arxiv_1808.10000.pdf"
+
+
+def test_repo_pdf_local_path_arxiv_with_version():
+    assert repo_pdf_local_path("https://arxiv.org/pdf/1810.04805v2") == "papers/arxiv_1810.04805.pdf"
+
+
+def test_repo_pdf_local_path_biorxiv():
+    assert repo_pdf_local_path(
+        "https://www.biorxiv.org/content/10.1101/2020.07.15.204107v2.full.pdf"
+    ) == "papers/biorxiv_10.1101_2020.07.15.204107.pdf"
+
+
+def test_repo_pdf_local_path_medrxiv():
+    assert repo_pdf_local_path(
+        "https://www.medrxiv.org/content/10.1101/2021.01.01.20249000v1.full.pdf"
+    ) == "papers/medrxiv_10.1101_2021.01.01.20249000.pdf"
+
+
+def test_repo_pdf_local_path_semanticscholar():
+    assert repo_pdf_local_path(
+        "https://pdfs.semanticscholar.org/4544/1baeb5af7fb4f2d9bd7b634ee6a1f9e36775.pdf"
+    ) == "papers/semanticscholar_45441baeb5af7fb4f2d9bd7b634ee6a1f9e36775.pdf"
+
+
+def test_repo_pdf_local_path_unknown_domain():
+    assert repo_pdf_local_path("https://example.com/paper.pdf") is None
 
 
 # --- doi_to_local_path ---
