@@ -90,6 +90,31 @@ def _build_citations(extlinks: list[str], wikitext: str) -> list[Citation]:
     return citations
 
 
+def fetch_random_article() -> tuple[str, str, str]:
+    """Return (url, title, description) for a random Wikipedia article."""
+    resp = httpx.get(
+        MEDIAWIKI_API,
+        params={
+            "action": "query",
+            "list": "random",
+            "rnnamespace": "0",
+            "rnlimit": "1",
+            "prop": "description",
+            "format": "json",
+            "formatversion": "2",
+        },
+        headers=HEADERS,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    title = data["query"]["random"][0]["title"]
+    pages = data["query"].get("pages", {})
+    description = next(iter(pages.values()), {}).get("description", "") if pages else ""
+    url = f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}"
+    return url, title, description
+
+
 async def fetch_article(url: str) -> WikiArticle:
     """
     Fetch article content, sections, and citations.
