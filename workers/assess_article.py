@@ -105,6 +105,7 @@ def _build_assessment(raw: dict, flip_flopped: set) -> ArticleAssessment:
         no_edit_reason=raw.get("no_edit_reason", ""),
         would_edit_sections=would_edit,
         scope_of_work=raw.get("scope_of_work", ""),
+        needs_focus=bool(raw.get("needs_focus", False)),
     )
 
 

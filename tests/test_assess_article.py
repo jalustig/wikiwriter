@@ -201,3 +201,18 @@ def test_section_scores_preserves_content_sections():
 def test_section_scores_defaults_missing_grade_to_5():
     scores = _build_section_scores(["History"], {})
     assert "History: 5.0" in scores
+
+
+# ── needs_focus field ───────────────────────────────────────────────────────
+
+def test_needs_focus_defaults_false():
+    result = _build_assessment(_raw_normal(), flip_flopped=set())
+    assert result.needs_focus is False
+
+
+def test_needs_focus_propagates_true():
+    raw = _raw_normal()
+    raw["needs_focus"] = True
+    raw["article_class"] = "COMPLETE"
+    result = _build_assessment(raw, flip_flopped=set())
+    assert result.needs_focus is True
