@@ -1,6 +1,7 @@
 # ABOUTME: Web content fetcher — cleans HTML to readable text for source evaluation.
-# ABOUTME: Falls back to Playwright for JS-rendered/CAPTCHA-gated pages; Wayback for dead URLs.
+# ABOUTME: Falls back to stealth Playwright for JS-rendered/CAPTCHA-gated pages; Wayback for dead URLs.
 
+import logging
 import random
 import httpx
 from bs4 import BeautifulSoup
@@ -9,6 +10,8 @@ from cache import cache, cache_key, record_tool_call
 from utils.log import log_tool_call
 from tools.wayback import get_archive_url
 from tools.academic import _extract_citation_pdf_url
+
+logger = logging.getLogger(__name__)
 
 _MIN_BODY_CHARS = 200
 
@@ -61,24 +64,31 @@ def _extract_doi(url: str) -> str | None:
 
 
 async def _fetch_via_playwright(url: str) -> str:
-    """Render page with headless Chromium; behaves like a real browser to avoid bot detection."""
+    """Render page with stealth headless Chromium to defeat bot detection."""
     from playwright.async_api import async_playwright
+    from playwright_stealth import stealth_async
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         try:
             context = await browser.new_context(
                 user_agent=_PLAYWRIGHT_UA,
-                viewport={"width": 1280, "height": 800},
+                viewport={
+                    "width": random.randint(1200, 1400),
+                    "height": random.randint(700, 900),
+                },
                 locale="en-US",
             )
             page = await context.new_page()
+            await stealth_async(page)
             # Block images and fonts — we only need text content
             await page.route(
                 "**/*.{png,jpg,jpeg,gif,webp,svg,ico,woff,woff2,ttf,eot}",
                 lambda route: route.abort(),
             )
-            await page.goto(url, timeout=25000, wait_until="domcontentloaded")
-            await page.wait_for_timeout(random.uniform(800, 2000))
+            await page.wait_for_timeout(random.uniform(500, 1500))
+            await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            await page.evaluate("window.scrollBy(0, 300)")
+            await page.wait_for_timeout(random.uniform(1500, 3000))
             content = await page.content()
         finally:
             await browser.close()
@@ -139,11 +149,13 @@ async def fetch_readable(url: str) -> str:
         content_type = ct
         fetched_original = True
         if _needs_playwright(200, raw):
+            logger.warning("httpx blocked/thin response for %s, escalating to stealth Playwright", url)
             html = await _fetch_via_playwright(url)
         else:
             html = raw
     except httpx.HTTPStatusError as e:
         if _needs_playwright(e.response.status_code, ""):
+            logger.warning("httpx got %s for %s, escalating to stealth Playwright", e.response.status_code, url)  # noqa: E501
             try:
                 html = await _fetch_via_playwright(url)
             except Exception:
@@ -162,6 +174,7 @@ async def fetch_readable(url: str) -> str:
 
     # If Playwright returned a CAPTCHA page, try Wayback instead
     if html and _has_captcha(html):
+        logger.warning("stealth Playwright still blocked by bot-check on %s, trying Wayback", url)
         archive_url = await get_archive_url(url)
         if archive_url:
             _, html = await fetch_raw(archive_url)
