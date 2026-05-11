@@ -154,12 +154,13 @@ def render_output_stage(acc: dict) -> None:
     if assembled:
         st.divider()
         st.subheader("Download Final Article")
-        st.download_button(
-            label="⬇ Download wikitext",
-            data=assembled,
-            file_name=f"{article_data.get('title', 'article').replace(' ', '_')}.wiki",
-            mime="text/plain",
-        )
+        # Store download data in session_state so download button can be rendered
+        # outside run_and_render, avoiding a full page rerun that clears the UI.
+        st.session_state["wikitext_download"] = {
+            "data": assembled,
+            "filename": f"{article_data.get('title', 'article').replace(' ', '_')}.wiki",
+        }
+        st.info("Wikitext ready — use the download button above the tabs.")
 
 
 def render_critique_panel(critique: CritiqueResult) -> None:
@@ -357,9 +358,7 @@ def run_and_render(url: str) -> None:
         debug_ph = st.empty()
 
     with tab_log:
-        st.checkbox("🔴 Live tail (1s refresh)", key="log_live")
         log_ph = st.empty()
-        log_dl_ph = st.empty()
         log_ph.info("No run started yet. Start a run to see the log.")
 
     # Bottom status bar (full width, outside tabs)
@@ -639,29 +638,15 @@ def run_and_render(url: str) -> None:
                 _append_thought(stage, f"❌ **{event.message}**")
                 _refresh_loop_image()
 
-            # Refresh log tab at appropriate polling interval
+            # Refresh log tab every 5 seconds
             now = time.monotonic()
-            interval = 1.0 if st.session_state.get("log_live") else 5.0
-            if now - st.session_state.get("log_last_refresh", 0.0) >= interval:
+            if now - st.session_state.get("log_last_refresh", 0.0) >= 5.0:
                 _refresh_log()
 
     asyncio.run(_stream())
     status_ph.empty()
     _refresh_telemetry()
     _refresh_log()
-    path = get_log_path() or st.session_state.get("log_path")
-    if path:
-        try:
-            log_contents = open(path).read()
-            with log_dl_ph.container():
-                st.download_button(
-                    label="⬇ Download .log file",
-                    data=log_contents,
-                    file_name=path.split("/")[-1],
-                    mime="text/plain",
-                )
-        except OSError:
-            pass
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -673,15 +658,39 @@ def main():
         st.title("WikiWriter")
         st.caption("Quality-first Wikipedia editing agent")
 
-    url = st.text_input(
-        "Wikipedia article URL",
-        placeholder="https://en.wikipedia.org/wiki/Grafana",
-    )
-    analyse = st.button("Analyse & draft edit", type="primary")
+    with st.form("url_form"):
+        url = st.text_input(
+            "Wikipedia article URL",
+            placeholder="https://en.wikipedia.org/wiki/Grafana",
+        )
+        analyse = st.form_submit_button("Analyse & draft edit", type="primary")
+
+    # Render download buttons here so they survive reruns without re-triggering the run
+    dl = st.session_state.get("wikitext_download")
+    if dl:
+        st.download_button(
+            label="⬇ Download wikitext",
+            data=dl["data"],
+            file_name=dl["filename"],
+            mime="text/plain",
+        )
+    log_dl = st.session_state.get("log_path")
+    if log_dl:
+        try:
+            log_contents = open(log_dl).read()
+            st.download_button(
+                label="⬇ Download .log file",
+                data=log_contents,
+                file_name=log_dl.split("/")[-1],
+                mime="text/plain",
+            )
+        except OSError:
+            pass
 
     if not analyse or not url:
         return
 
+    st.session_state.pop("wikitext_download", None)
     run_and_render(url)
 
 
