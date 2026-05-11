@@ -6,6 +6,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from cache import cache, cache_key, record_tool_call
+from utils.log import log_tool_call
 from tools.wayback import get_archive_url
 
 _MIN_BODY_CHARS = 200
@@ -115,6 +116,7 @@ async def fetch_readable(url: str) -> str:
     """
     _key = f"page_text:{cache_key(url)}"
     record_tool_call("fetch")
+    log_tool_call("fetch", {"url": url})
     if _key in cache:
         return cache[_key]
 

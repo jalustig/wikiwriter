@@ -6,6 +6,7 @@ import re
 from typing import Literal
 
 from cache import record_tool_call
+from utils.log import log_tool_call
 from utils.diff import (
     Token, heckel_diff_ops, word_diff_ops,
     section_diff_html, section_diff_text,
@@ -317,6 +318,7 @@ def section_diff(
     Falls back to the paragraph-level SequenceMatcher if spaCy/mdiff are unavailable.
     """
     record_tool_call("diff")
+    log_tool_call("diff")
 
     if not _HAS_MDIFF or not _HAS_SPACY:
         if output == "html":

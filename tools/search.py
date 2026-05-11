@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 
 from cache import cache, cache_key, record_tool_call
+from utils.log import log_tool_call
 
 load_dotenv()
 _TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
@@ -17,6 +18,7 @@ async def search(query: str, max_results: int = 5) -> list[dict]:
 
     _key = f"search_results:{cache_key(query, max_results)}"
     record_tool_call("search")
+    log_tool_call("search", {"query": query, "max_results": max_results})
     if _key in cache:
         return cache[_key]
     client = TavilyClient(api_key=_TAVILY_API_KEY)

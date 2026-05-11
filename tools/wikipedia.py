@@ -9,6 +9,7 @@ import wikipediaapi
 from urllib.parse import unquote
 
 from cache import cache_key, cache, record_tool_call
+from utils.log import log_tool_call
 from models import WikiArticle, Citation
 
 MEDIAWIKI_API = "https://en.wikipedia.org/w/api.php"
@@ -96,6 +97,7 @@ async def fetch_article(url: str) -> WikiArticle:
     """
     cache_ns = f"article_v2:{cache_key(url)}"
     record_tool_call("wikipedia")
+    log_tool_call("wikipedia", {"url": url})
     if cache_ns in cache:
         return WikiArticle.model_validate(cache[cache_ns])
 
@@ -156,6 +158,7 @@ async def fetch_edit_history(title: str) -> list[dict]:
     """Fetch the last 500 edits for an article via MediaWiki API."""
     cache_ns = f"edit_history:{cache_key(title)}"
     record_tool_call("wikipedia")
+    log_tool_call("wikipedia", {"title": title})
     if cache_ns in cache:
         return cache[cache_ns]
     async with httpx.AsyncClient(headers=HEADERS, timeout=30) as client:
@@ -176,6 +179,7 @@ async def fetch_talk_page(title: str) -> str:
     """Fetch talk page wikitext, including up to 5 archive pages."""
     cache_ns = f"talk_page:{cache_key(title)}"
     record_tool_call("wikipedia")
+    log_tool_call("wikipedia", {"title": title})
     if cache_ns in cache:
         return cache[cache_ns]
     talk_title = f"Talk:{title}"

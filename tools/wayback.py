@@ -4,12 +4,14 @@
 from __future__ import annotations
 import asyncio
 from cache import cache_key, cache, record_tool_call
+from utils.log import log_tool_call
 
 
 async def get_archive_url(url: str) -> str | None:
     """Return newest Wayback Machine snapshot URL for a dead URL, or None."""
     key = f"wayback:{cache_key(url)}"
     record_tool_call("wayback")
+    log_tool_call("wayback", {"url": url})
     if key in cache:
         return cache[key]
     loop = asyncio.get_event_loop()
