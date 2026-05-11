@@ -545,7 +545,7 @@ def run_and_render(url: str) -> None:
                 col3.metric("Quality Delta", f"{proposal.quality_delta:+.1f}", delta_color="normal")
 
     def _refresh_log():
-        path = get_log_path()
+        path = get_log_path() or st.session_state.get("log_path")
         if not path:
             return
         try:
@@ -556,11 +556,16 @@ def run_and_render(url: str) -> None:
             st.code(contents, language=None)
         st.session_state["log_last_refresh"] = time.monotonic()
 
-    if "log_last_refresh" not in st.session_state:
-        st.session_state["log_last_refresh"] = 0.0
+    st.session_state.pop("log_path", None)
+    st.session_state["log_last_refresh"] = 0.0
 
     async def _stream():
         async for event in WikiWriterOrchestrator().run(url):
+            if "log_path" not in st.session_state:
+                path = get_log_path()
+                if path:
+                    st.session_state["log_path"] = path
+
             stage = event.stage
 
             # Stage transition bookkeeping — only on structural events so that
@@ -644,7 +649,7 @@ def run_and_render(url: str) -> None:
     status_ph.empty()
     _refresh_telemetry()
     _refresh_log()
-    path = get_log_path()
+    path = get_log_path() or st.session_state.get("log_path")
     if path:
         try:
             log_contents = open(path).read()
@@ -670,7 +675,7 @@ def main():
 
     url = st.text_input(
         "Wikipedia article URL",
-        placeholder="https://en.wikipedia.org/wiki/Super_Bowl_XXV",
+        placeholder="https://en.wikipedia.org/wiki/Grafana",
     )
     analyse = st.button("Analyse & draft edit", type="primary")
 
