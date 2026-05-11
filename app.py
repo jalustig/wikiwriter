@@ -12,7 +12,7 @@ from cache import get_telemetry
 from chart_utils import section_score_data, source_chart_data
 from constants import STAGE_META
 from dag_image import render_agent_loop, render_task_dag
-from diff_utils import section_diff_html
+from tools.diff import section_diff
 from models import (
     ContentGrade, EditorialEnvironment, ArticleAssessment,
     CritiqueResult, EditProposal,
@@ -100,7 +100,7 @@ def render_section_diff(draft: dict) -> None:
         if orig.strip() == revised.strip():
             st.write("_(no text changes)_")
         else:
-            st.html(section_diff_html(orig, revised))
+            st.html(section_diff(orig, revised, output="html"))
         for label, cites in (
             ("Citations added", draft.get("citations_added", [])),
             ("Citations removed", draft.get("citations_removed", [])),

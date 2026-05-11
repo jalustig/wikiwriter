@@ -7,7 +7,7 @@ import sys
 
 from constants import STAGE_META
 from dag import dag_layers
-from diff_utils import section_diff_text
+from tools.diff import section_diff
 from models import ContentGrade, EditorialEnvironment, ArticleAssessment
 from orchestrator import WikiWriterOrchestrator
 
@@ -135,7 +135,7 @@ def _print_diffs(section_drafts: list[dict]) -> None:
         if orig.strip() == revised.strip():
             print("    (no text changes)")
         else:
-            for ln in section_diff_text(orig, revised, width=_W - 6, color=True):
+            for ln in section_diff(orig, revised, output="text", width=_W - 6, color=True):
                 print(ln)
         for label, cites in (
             ("Citations added", draft.get("citations_added", [])),
