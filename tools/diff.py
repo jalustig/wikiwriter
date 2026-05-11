@@ -10,7 +10,7 @@ from utils.log import log_tool_call
 from utils.diff import (
     Token, heckel_diff_ops, word_diff_ops,
     section_diff_html, section_diff_text,
-    _HAS_MDIFF, _HAS_SPACY,
+    _HAS_MDIFF, _HAS_SPACY, _THEME_STYLE,
 )
 
 
@@ -102,41 +102,9 @@ def _footnote_html(num: int, op: str, text: str, paired_text: str | None = None)
     )
 
 
-_DARK_MODE_CSS = """
-<style>
-:root {
-  --diff-bg-equal:   #f8fafc; --diff-fg-equal:   inherit;
-  --diff-bg-insert:  #f5fff5; --diff-fg-insert:  inherit;
-  --diff-bg-delete:  #fff5f5; --diff-fg-delete:  #888;
-  --diff-bg-replace: #f8fafc; --diff-fg-replace: inherit;
-  --diff-bg-move:    #eff6ff; --diff-fg-move:    inherit;
-  --diff-meta:       #94a3b8;
-  --diff-border:     #e2e8f0;
-  --diff-cite-label: #64748b;
-  --word-del-bg:     #ffd7d5;
-  --word-ins-bg:     #d4edda;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --diff-bg-equal:   #1e2430; --diff-fg-equal:   #cbd5e1;
-    --diff-bg-insert:  #0d2318; --diff-fg-insert:  #86efac;
-    --diff-bg-delete:  #2d1414; --diff-fg-delete:  #fca5a5;
-    --diff-bg-replace: #1e2430; --diff-fg-replace: #cbd5e1;
-    --diff-bg-move:    #0f1d35; --diff-fg-move:    #93c5fd;
-    --diff-meta:       #64748b;
-    --diff-border:     #334155;
-    --diff-cite-label: #94a3b8;
-    --word-del-bg:     #5c1f1f;
-    --word-ins-bg:     #1a3d24;
-  }
-}
-</style>
-"""
-
-
 def _render_html(ops: list[tuple]) -> str:
     cite_nums = _assign_citation_numbers(ops)
-    blocks: list[str] = [_DARK_MODE_CSS]
+    blocks: list[str] = []
     footnotes: list[str] = []
     last_para = -1
     pending_inline: list[str] = []
@@ -215,16 +183,16 @@ def _render_html(ops: list[tuple]) -> str:
                 footnotes.append(_footnote_html(num, "moved", display.text))
 
     flush()
-    result = "\n".join(blocks)
+    inner = "\n".join(blocks)
     if footnotes:
-        result += (
+        inner += (
             "<div style='margin-top:20px;border-top:1px solid var(--diff-border);padding-top:12px'>"
             "<div style='font-size:11px;font-weight:700;color:var(--diff-cite-label);"
             "text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px'>Citations</div>"
             + "\n".join(footnotes)
             + "</div>"
         )
-    return result
+    return _THEME_STYLE + f"<div class='diff-root'>{inner}</div>"
 
 
 # ── Plaintext rendering ────────────────────────────────────────────────────────

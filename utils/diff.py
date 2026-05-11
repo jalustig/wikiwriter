@@ -202,29 +202,47 @@ def word_diff_ops(old: str, new: str) -> list[tuple[str, str]]:
     return ops
 
 
-_DARK_MODE_CSS = """
+_THEME_STYLE = """
 <style>
-:root {
-  --diff-bg-equal:   #f8fafc; --diff-fg-equal:   inherit;
-  --diff-bg-insert:  #f5fff5; --diff-fg-insert:  inherit;
-  --diff-bg-delete:  #fff5f5; --diff-fg-delete:  #888;
-  --diff-bg-replace: #fafafa;
+.diff-root {
+  --diff-bg-equal:   #f8fafc; --diff-fg-equal:   #0f172a;
+  --diff-bg-insert:  #f5fff5; --diff-fg-insert:  #14532d;
+  --diff-bg-delete:  #fff5f5; --diff-fg-delete:  #7f1d1d;
+  --diff-bg-replace: #f8fafc; --diff-fg-replace: #0f172a;
+  --diff-bg-move:    #eff6ff; --diff-fg-move:    #1e3a5f;
+  --diff-meta:       #94a3b8;
   --diff-border:     #e2e8f0;
+  --diff-cite-label: #64748b;
   --word-del-bg:     #ffd7d5;
   --word-ins-bg:     #d4edda;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --diff-bg-equal:   #1e2430; --diff-fg-equal:   #cbd5e1;
-    --diff-bg-insert:  #0d2318; --diff-fg-insert:  #86efac;
-    --diff-bg-delete:  #2d1414; --diff-fg-delete:  #fca5a5;
-    --diff-bg-replace: #1e2430;
-    --diff-border:     #334155;
-    --word-del-bg:     #5c1f1f;
-    --word-ins-bg:     #1a3d24;
-  }
+.diff-root.dark {
+  --diff-bg-equal:   #1e2430; --diff-fg-equal:   #cbd5e1;
+  --diff-bg-insert:  #0d2318; --diff-fg-insert:  #86efac;
+  --diff-bg-delete:  #2d1414; --diff-fg-delete:  #fca5a5;
+  --diff-bg-replace: #1e2430; --diff-fg-replace: #cbd5e1;
+  --diff-bg-move:    #0f1d35; --diff-fg-move:    #93c5fd;
+  --diff-meta:       #64748b;
+  --diff-border:     #334155;
+  --diff-cite-label: #94a3b8;
+  --word-del-bg:     #5c1f1f;
+  --word-ins-bg:     #1a3d24;
 }
 </style>
+<script>
+(function() {
+  var app = document.querySelector('[data-testid="stApp"]');
+  if (!app) return;
+  var bg = window.getComputedStyle(app).backgroundColor;
+  var m = bg.match(/rgb\\((\\d+),\\s*(\\d+),\\s*(\\d+)\\)/);
+  if (!m) return;
+  var lum = 0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3];
+  document.querySelectorAll('.diff-root').forEach(function(el) {
+    if (lum < 128) el.classList.add('dark');
+    else el.classList.remove('dark');
+  });
+})();
+</script>
 """
 
 
@@ -291,13 +309,17 @@ def section_diff_html(original: str, revised: str) -> str:
 
     if not orig_paras and not rev_paras:
         return "<p><em>(empty)</em></p>"
+
+    def _wrap(body: str) -> str:
+        return _THEME_STYLE + f"<div class='diff-root'>{body}</div>"
+
     if not orig_paras:
-        return _DARK_MODE_CSS + "".join(paragraph_diff_html("", p) for p in rev_paras)
+        return _wrap("".join(paragraph_diff_html("", p) for p in rev_paras))
     if not rev_paras:
-        return _DARK_MODE_CSS + "".join(paragraph_diff_html(p, "") for p in orig_paras)
+        return _wrap("".join(paragraph_diff_html(p, "") for p in orig_paras))
 
     matcher = difflib.SequenceMatcher(None, orig_paras, rev_paras, autojunk=False)
-    blocks = [_DARK_MODE_CSS]
+    blocks = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             for p in orig_paras[i1:i2]:
@@ -322,7 +344,7 @@ def section_diff_html(original: str, revised: str) -> str:
         elif tag == "insert":
             for p in rev_paras[j1:j2]:
                 blocks.append(paragraph_diff_html("", p))
-    return "\n".join(blocks)
+    return _wrap("\n".join(blocks))
 
 
 # ── CLI text rendering ──────────────────────────────────────────────────────────

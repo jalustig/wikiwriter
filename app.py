@@ -101,7 +101,7 @@ def render_section_diff(draft: dict) -> None:
         if orig.strip() == revised.strip():
             st.write("_(no text changes)_")
         else:
-            st.html(section_diff(orig, revised, output="html"))
+            st.html(section_diff(orig, revised, output="html"), unsafe_allow_javascript=True)
         for label, cites in (
             ("Citations added", draft.get("citations_added", [])),
             ("Citations removed", draft.get("citations_removed", [])),
@@ -149,7 +149,7 @@ def render_output_stage(acc: dict) -> None:
             if orig.strip() == revised.strip():
                 st.write("_(no text changes)_")
             else:
-                st.html(section_diff(orig, revised, output="html"))
+                st.html(section_diff(orig, revised, output="html"), unsafe_allow_javascript=True)
 
     if assembled:
         st.divider()
