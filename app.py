@@ -292,8 +292,10 @@ def run_and_render(url: str) -> None:
         st.markdown("#### Task DAG")
         dag_ph = st.empty()
 
-    # Render initial agent loop image (all pending)
+    # Render initial images — pre-populate both placeholders so the sidebar
+    # layout is stable (empty placeholders cause reflow under width="stretch").
     loop_ph.image(render_agent_loop([], None, set(), 0), width="stretch")
+    dag_ph.image(render_task_dag({}, set(), set()), width="stretch")
 
     # ── Main tabs ──────────────────────────────────────────────────────────────
     tab_run, tab_debug = st.tabs(["▶ Run", "🔬 Debug"])
@@ -310,6 +312,7 @@ def run_and_render(url: str) -> None:
 
     # Bottom status bar (full width, outside tabs)
     telemetry_ph = st.empty()
+    scroll_ph = st.empty()
 
     # ── Mutable state ──────────────────────────────────────────────────────────
     state = {
@@ -340,11 +343,12 @@ def run_and_render(url: str) -> None:
                 st.markdown(f"⟳ *Working…* ({elapsed})")
 
     def _scroll_to_bottom():
-        components.html(
-            "<script>window.parent.document.querySelector('section.main').scrollTo("
-            "{top: 999999, behavior: 'smooth'});</script>",
-            height=0,
-        )
+        with scroll_ph.container():
+            components.html(
+                "<script>window.parent.document.querySelector('section.main').scrollTo("
+                "{top: 999999, behavior: 'smooth'});</script>",
+                height=0,
+            )
 
     def _refresh_telemetry():
         tel = get_telemetry()
@@ -421,7 +425,6 @@ def run_and_render(url: str) -> None:
         key = _ph_key(stage)
         _ensure_ph(stage)
         state["stage_thoughts"][key].append(text)
-        _refresh_stage_ph(stage)
 
     def _render_debug(acc: dict) -> None:
         with debug_ph.container():
@@ -509,7 +512,8 @@ def run_and_render(url: str) -> None:
                 # the friendly STAGE_META label regardless of narrator's stage name.
                 effective_stage = state["current_stage"] or stage
                 _append_thought(effective_stage, f"*{event.message}*")
-                _refresh_status(event.message)
+                if "\n" not in event.message:
+                    _refresh_status(event.message)
                 _refresh_telemetry()
 
             elif event.status == "running":

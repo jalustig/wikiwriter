@@ -52,21 +52,6 @@ class ContentGrade(BaseModel):
     narrative: str
 
 
-# --- v1 model kept for planner hard-rules tests ---
-class EditorialRiskProfile(BaseModel):
-    risk_tier: Literal["LOW", "MODERATE", "HIGH", "CRITICAL"]
-    revert_rate_12mo: float
-    edit_velocity: int
-    dominant_editor: str | None = None
-    flip_flopped_sections: list[str]
-    active_disputes: list[dict]
-    resolved_disputes: list[dict]
-    editor_imposed_norms: list[str]
-    wikiproject_affiliations: list[str]
-    risk_narrative: str
-
-
-# --- v2 editorial model ---
 class EditorialEnvironment(BaseModel):
     revert_rate_12mo: float
     edit_velocity: int
