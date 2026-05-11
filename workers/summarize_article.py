@@ -18,11 +18,11 @@ _MODEL = os.getenv("FAST_MODEL", "gpt-5.4")
 
 def _article_text(article: WikiArticle) -> str:
     parts = []
-    for name in article.sections[:8]:  # first 8 sections is enough
+    for name in article.sections:
         text = article.section_texts.get(name, "")
         if text.strip():
             parts.append(f"== {name} ==\n{text}" if name != "Lead" else text)
-    return "\n\n".join(parts)[:6000]
+    return "\n\n".join(parts)
 
 
 async def summarize_article(article: WikiArticle) -> ArticleSummary:

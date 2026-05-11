@@ -23,13 +23,12 @@ DIMENSION_WEIGHTS = {
 
 
 _PROMPT_TEMPLATE = (Path(__file__).parent.parent / "prompts" / "article_grader.txt").read_text()
-_SECTION_CHAR_LIMIT = 2000
 
 
 def _build_grader_prompt(article: "WikiArticle") -> str:
     parts = []
     for name in article.sections:
-        text = article.section_texts.get(name, "")[:_SECTION_CHAR_LIMIT]
+        text = article.section_texts.get(name, "")
         if text.strip():
             parts.append(f"== {name} ==\n{text}" if name != "Lead" else text)
     sections_text = "\n\n".join(parts)

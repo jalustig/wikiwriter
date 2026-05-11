@@ -20,40 +20,25 @@ _MODEL = os.getenv("DRAFT_MODEL", "gpt-4o")
 
 _MAX_EDIT_SECTIONS = 3
 
-_PER_SECTION_LIMIT = 400
-_TOTAL_TEXT_LIMIT = 6000
-
 
 def _build_article_text(
     article: "WikiArticle",
-    per_section_limit: int = _PER_SECTION_LIMIT,
     candidate_sections: list[str] | None = None,
-    candidate_full_limit: int = 3000,
 ) -> str:
     """Build article text for the assess prompt.
 
-    Pass 1 (candidate_sections=None): first per_section_limit chars of each section.
-    Pass 2 (candidate_sections provided): full text up to candidate_full_limit for
-    candidates, truncated snippets for all others.
+    Pass 1 (candidate_sections=None): full text of all sections.
+    Pass 2 (candidate_sections provided): full text for candidates, lead-only for others.
     """
     parts = []
-    total = 0
     for name in article.sections:
         text = article.section_texts.get(name, "")
         if not text.strip():
             continue
-        if candidate_sections is not None and name in candidate_sections:
-            snippet = text[:candidate_full_limit]
-        else:
-            snippet = text[:per_section_limit]
-        if total + len(snippet) > _TOTAL_TEXT_LIMIT:
-            remaining = _TOTAL_TEXT_LIMIT - total
-            if remaining <= 0:
-                break
-            snippet = snippet[:remaining]
+        if candidate_sections is not None and name not in candidate_sections and name != "Lead":
+            continue
         header = f"== {name} ==" if name != "Lead" else ""
-        parts.append(f"{header}\n{snippet}".strip() if header else snippet)
-        total += len(snippet)
+        parts.append(f"{header}\n{text}".strip() if header else text)
     return "\n\n".join(parts)
 
 
@@ -199,8 +184,7 @@ async def assess_article(
 
     if focus_context:
         article_text = _build_article_text(
-            article,
-            candidate_sections=focus_context.get("candidate_sections", []),
+            article, candidate_sections=focus_context.get("candidate_sections", []),
         )
         candidate_list = focus_context.get("candidate_sections", [])
         focus_context_block = (

@@ -244,18 +244,22 @@ def test_build_article_text_includes_all_sections():
     assert "Geography" in result
 
 
-def test_build_article_text_truncates_long_sections():
-    article = _make_wiki_article(["Lead"], {"Lead": "x" * 1000})
-    result = _build_article_text(article, per_section_limit=400)
-    assert "x" * 401 not in result
+def test_build_article_text_no_truncation():
+    """Section text is never truncated — LLM receives full content."""
+    long_text = "x" * 5000
+    article = _make_wiki_article(["Lead"], {"Lead": long_text})
+    result = _build_article_text(article)
+    assert "x" * 5000 in result
 
 
-def test_build_article_text_respects_total_cap():
+def test_build_article_text_all_sections_included():
+    """All sections appear in output, not just the first few."""
     sections = [f"S{i}" for i in range(30)]
-    texts = {s: "word " * 200 for s in sections}
+    texts = {s: f"Content of {s}." for s in sections}
     article = _make_wiki_article(sections, texts)
     result = _build_article_text(article)
-    assert len(result) <= 6200  # 6000 chars of text + ~200 chars for section headers and separators
+    for name in sections:
+        assert name in result
 
 
 # ── focused pass: needs_focus and cap behaviour ─────────────────────────────

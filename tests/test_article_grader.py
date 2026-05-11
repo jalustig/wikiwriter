@@ -64,14 +64,12 @@ def test_all_sections_appear_in_prompt():
         assert name in prompt, f"Section '{name}' missing from grader prompt"
 
 
-def test_per_section_text_is_truncated():
-    """Each section contributes at most 2000 chars to avoid any one section dominating."""
+def test_full_section_text_included():
+    """Section text is not truncated — the LLM receives the full text."""
     long_text = "x" * 5000
     article = _make_article(
         wikitext="dummy",
         section_texts={"Lead": long_text},
     )
-    article.sections = ["Lead"]
     prompt = _build_grader_prompt(article)
-    # The 5000-char section should be capped — prompt should not contain 5000 x's in a row
-    assert "x" * 2001 not in prompt
+    assert "x" * 5000 in prompt
