@@ -186,7 +186,7 @@ class WikiWriterOrchestrator:
         # ── FETCH ─────────────────────────────────────────────────────────────
         yield ProgressEvent(stage="FETCH", status="running", message=f"Fetching {url}...")
         article = await fetch_article(url)
-        lead_text = article.section_texts.get("Lead", "")[:1200]
+        lead_text = article.section_texts.get("Lead", "")
         async for t in _narrate("fetch", {
             "article_title": article.title,
             "assessment_class": article.assessment_class or "unrated",
