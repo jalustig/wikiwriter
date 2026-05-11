@@ -26,7 +26,6 @@ def test_prompt_includes_ref_tags_from_wikitext():
         wikitext=wikitext,
         section_texts={"Lead": wikitext},
     )
-    article.sections = ["Lead"]
     prompt = _build_grader_prompt(article)
     assert "<ref>" in prompt or '<ref name="foo">' in prompt
 
@@ -37,7 +36,6 @@ def test_prompt_includes_cite_templates():
         wikitext=wikitext,
         section_texts={"Lead": wikitext},
     )
-    article.sections = ["Lead"]
     prompt = _build_grader_prompt(article)
     assert "cite web" in prompt
 
@@ -47,7 +45,6 @@ def test_prompt_includes_article_title():
         wikitext="Some content",
         section_texts={"Lead": "Some content"},
     )
-    article.sections = ["Lead"]
     article.title = "Service star"
     prompt = _build_grader_prompt(article)
     assert "Service star" in prompt
@@ -78,10 +75,3 @@ def test_per_section_text_is_truncated():
     prompt = _build_grader_prompt(article)
     # The 5000-char section should be capped — prompt should not contain 5000 x's in a row
     assert "x" * 2001 not in prompt
-
-
-def test_prompt_includes_article_title_v2():
-    article = _make_article(wikitext="dummy", section_texts={"Lead": "Some content."})
-    article.sections = ["Lead"]
-    prompt = _build_grader_prompt(article)
-    assert "Test Article" in prompt
