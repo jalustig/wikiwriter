@@ -27,10 +27,14 @@ _TOTAL_TEXT_LIMIT = 6000
 def _build_article_text(
     article: "WikiArticle",
     per_section_limit: int = _PER_SECTION_LIMIT,
+    candidate_sections: list[str] | None = None,
+    candidate_full_limit: int = 3000,
 ) -> str:
     """Build article text for the assess prompt.
 
-    Takes the first per_section_limit chars of each section, capped at _TOTAL_TEXT_LIMIT overall.
+    Pass 1 (candidate_sections=None): first per_section_limit chars of each section.
+    Pass 2 (candidate_sections provided): full text up to candidate_full_limit for
+    candidates, truncated snippets for all others.
     """
     parts = []
     total = 0
@@ -38,7 +42,10 @@ def _build_article_text(
         text = article.section_texts.get(name, "")
         if not text.strip():
             continue
-        snippet = text[:per_section_limit]
+        if candidate_sections is not None and name in candidate_sections:
+            snippet = text[:candidate_full_limit]
+        else:
+            snippet = text[:per_section_limit]
         if total + len(snippet) > _TOTAL_TEXT_LIMIT:
             remaining = _TOTAL_TEXT_LIMIT - total
             if remaining <= 0:
@@ -99,7 +106,7 @@ def _parse_sections(raw_list: list, flip_flopped: set) -> list[SectionDecision]:
     return sections
 
 
-def _build_assessment(raw: dict, flip_flopped: set) -> ArticleAssessment:
+def _build_assessment(raw: dict, flip_flopped: set, is_final: bool = True) -> ArticleAssessment:
     """Build ArticleAssessment from parsed LLM response dict."""
     importance = ArticleImportance(
         tier=raw["importance"]["tier"],
@@ -114,7 +121,8 @@ def _build_assessment(raw: dict, flip_flopped: set) -> ArticleAssessment:
         would_edit = _parse_sections(raw.get("would_edit_sections", []), flip_flopped)
     else:
         sections = _parse_sections(raw.get("sections", []), flip_flopped)
-        sections = _enforce_section_cap(sections)
+        if is_final:
+            sections = _enforce_section_cap(sections)
         # Keep SKIP entries only if they were flip-flopped (useful for display); drop others
         flip_skips = {s.name for s in sections if s.action == "SKIP" and s.name in flip_flopped}
         sections = [s for s in sections if s.action == "EDIT" or s.name in flip_skips]
@@ -159,13 +167,24 @@ async def assess_article(
     grade: ContentGrade,
     environment: EditorialEnvironment,
     source_evals: list[SourceEvaluation],
+    focus_context: dict | None = None,
 ) -> ArticleAssessment:
-    key = cache_key(
-        "assess_article",
-        article.url,
-        grade.overall_score,
-        environment.caution_level,
-    )
+    if focus_context:
+        candidate_names = sorted(focus_context.get("candidate_sections", []))
+        key = cache_key(
+            "assess_article_focused",
+            article.url,
+            grade.overall_score,
+            environment.caution_level,
+            *candidate_names,
+        )
+    else:
+        key = cache_key(
+            "assess_article",
+            article.url,
+            grade.overall_score,
+            environment.caution_level,
+        )
     if key in cache:
         return ArticleAssessment.model_validate(cache[key])
 
@@ -178,12 +197,28 @@ async def assess_article(
     flip = ", ".join(environment.flip_flopped_sections) or "None"
     disputes = json.dumps(environment.active_disputes) if environment.active_disputes else "None"
 
-    article_text = _build_article_text(article)
+    if focus_context:
+        article_text = _build_article_text(
+            article,
+            candidate_sections=focus_context.get("candidate_sections", []),
+        )
+        candidate_list = focus_context.get("candidate_sections", [])
+        focus_context_block = (
+            "\n### Focus Instruction\n"
+            "You are now making a FINAL section selection. Full text has been provided above "
+            f"for these candidate sections: {', '.join(candidate_list)}.\n"
+            "Choose at most 3 of these for EDIT. Do NOT set needs_focus=true in your response.\n\n"
+        )
+    else:
+        article_text = _build_article_text(article)
+        focus_context_block = ""
+
     prompt = _PROMPT.format(
         article_title=article.title,
         article_topic=summary.topic,
         article_scope=summary.scope,
         article_text=article_text,
+        focus_context_block=focus_context_block,
         letter_grade=grade.letter_grade,
         overall_score=grade.overall_score,
         assessment_class=article.assessment_class or "unrated",
@@ -214,6 +249,7 @@ async def assess_article(
                      getattr(response.usage, "completion_tokens", 0))
     raw = json.loads(raw_text)
     flip_set = set(environment.flip_flopped_sections)
-    result = _build_assessment(raw, flip_set)
+    is_final = focus_context is not None or raw.get("article_class") in ("STUB", "DEVELOPING")
+    result = _build_assessment(raw, flip_set, is_final=is_final)
     cache.set(key, result.model_dump(), expire=3600)
     return result

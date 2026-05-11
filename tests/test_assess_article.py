@@ -256,3 +256,33 @@ def test_build_article_text_respects_total_cap():
     article = _make_wiki_article(sections, texts)
     result = _build_article_text(article)
     assert len(result) <= 6200  # 6000 chars of text + ~200 chars for section headers and separators
+
+
+# ── focused pass: needs_focus and cap behaviour ─────────────────────────────
+
+def test_cap_not_applied_when_needs_focus_true():
+    """Pass 1 for COMPLETE article: LLM returns needs_focus=True, cap should NOT be enforced."""
+    raw = _raw_normal()
+    raw["article_class"] = "COMPLETE"
+    raw["needs_focus"] = True
+    raw["sections"] = [
+        {"name": f"S{i}", "action": "EDIT", "edit_type": "EXPAND", "rationale": "thin"}
+        for i in range(5)
+    ]
+    result = _build_assessment(raw, flip_flopped=set(), is_final=False)
+    edits = [s for s in result.sections if s.action == "EDIT"]
+    assert len(edits) == 5  # cap not enforced on non-final pass
+
+
+def test_cap_applied_when_is_final():
+    """Final pass always enforces the cap."""
+    raw = _raw_normal()
+    raw["article_class"] = "COMPLETE"
+    raw["needs_focus"] = False
+    raw["sections"] = [
+        {"name": f"S{i}", "action": "EDIT", "edit_type": "EXPAND", "rationale": "thin"}
+        for i in range(5)
+    ]
+    result = _build_assessment(raw, flip_flopped=set(), is_final=True)
+    edits = [s for s in result.sections if s.action == "EDIT"]
+    assert len(edits) <= 3

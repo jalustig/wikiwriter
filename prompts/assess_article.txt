@@ -8,7 +8,7 @@ Scope: {article_scope}
 
 ### Article Text (excerpts)
 {article_text}
-
+{focus_context_block}
 ### Current Quality
 Grade: {letter_grade} ({overall_score}/10)
 Assessment class: {assessment_class}
