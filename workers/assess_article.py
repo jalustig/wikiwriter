@@ -20,6 +20,42 @@ _MODEL = os.getenv("DRAFT_MODEL", "gpt-4o")
 
 _MAX_EDIT_SECTIONS = 3
 
+_PER_SECTION_LIMIT = 400
+_TOTAL_TEXT_LIMIT = 6000
+
+
+def _build_article_text(
+    article: "WikiArticle",
+    per_section_limit: int = _PER_SECTION_LIMIT,
+    candidate_sections: list[str] | None = None,
+    candidate_full_limit: int = 3000,
+) -> str:
+    """Build article text for the assess prompt.
+
+    For Pass 1 (candidate_sections=None): first per_section_limit chars of each section.
+    For Pass 2 (candidate_sections provided): full text (up to candidate_full_limit) for
+    candidates, truncated snippets for all others.
+    """
+    parts = []
+    total = 0
+    for name in article.sections:
+        text = article.section_texts.get(name, "")
+        if not text.strip():
+            continue
+        if candidate_sections is not None and name in candidate_sections:
+            snippet = text[:candidate_full_limit]
+        else:
+            snippet = text[:per_section_limit]
+        if total + len(snippet) > _TOTAL_TEXT_LIMIT:
+            remaining = _TOTAL_TEXT_LIMIT - total
+            if remaining <= 0:
+                break
+            snippet = snippet[:remaining]
+        header = f"== {name} ==" if name != "Lead" else ""
+        parts.append(f"{header}\n{snippet}".strip() if header else snippet)
+        total += len(snippet)
+    return "\n\n".join(parts)
+
 
 def _source_quality_summary(source_evals: list[SourceEvaluation]) -> str:
     if not source_evals:
@@ -149,10 +185,12 @@ async def assess_article(
     flip = ", ".join(environment.flip_flopped_sections) or "None"
     disputes = json.dumps(environment.active_disputes) if environment.active_disputes else "None"
 
+    article_text = _build_article_text(article)
     prompt = _PROMPT.format(
         article_title=article.title,
         article_topic=summary.topic,
         article_scope=summary.scope,
+        article_text=article_text,
         letter_grade=grade.letter_grade,
         overall_score=grade.overall_score,
         assessment_class=article.assessment_class or "unrated",

@@ -6,6 +6,9 @@ You are a senior Wikipedia editor making a binary editorial decision: should we 
 Topic: {article_topic}
 Scope: {article_scope}
 
+### Article Text (excerpts)
+{article_text}
+
 ### Current Quality
 Grade: {letter_grade} ({overall_score}/10)
 Assessment class: {assessment_class}

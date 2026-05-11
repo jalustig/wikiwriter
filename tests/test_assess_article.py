@@ -2,9 +2,11 @@
 # ABOUTME: Tests the deterministic post-LLM processing, not the LLM call itself.
 
 from models import (
-    ArticleImportance, SectionDecision,
+    ArticleImportance, SectionDecision, WikiArticle,
 )
-from workers.assess_article import _enforce_section_cap, _build_assessment, _build_section_scores
+from workers.assess_article import (
+    _enforce_section_cap, _build_assessment, _build_section_scores, _build_article_text,
+)
 
 
 def _importance(tier="MAJOR"):
@@ -216,3 +218,41 @@ def test_needs_focus_propagates_true():
     raw["article_class"] = "COMPLETE"
     result = _build_assessment(raw, flip_flopped=set())
     assert result.needs_focus is True
+
+
+# ── _build_article_text ─────────────────────────────────────────────────────
+
+def _make_wiki_article(sections, section_texts):
+    return WikiArticle(
+        title="Test",
+        url="https://en.wikipedia.org/wiki/Test",
+        wikitext="",
+        sections=sections,
+        section_texts=section_texts,
+        citations=[],
+        assessment_class=None,
+    )
+
+
+def test_build_article_text_includes_all_sections():
+    sections = ["Lead", "History", "Geography"]
+    texts = {s: f"Text of {s}." for s in sections}
+    article = _make_wiki_article(sections, texts)
+    result = _build_article_text(article)
+    assert "Lead" in result
+    assert "History" in result
+    assert "Geography" in result
+
+
+def test_build_article_text_truncates_long_sections():
+    article = _make_wiki_article(["Lead"], {"Lead": "x" * 1000})
+    result = _build_article_text(article, per_section_limit=400)
+    assert "x" * 401 not in result
+
+
+def test_build_article_text_respects_total_cap():
+    sections = [f"S{i}" for i in range(30)]
+    texts = {s: "word " * 200 for s in sections}
+    article = _make_wiki_article(sections, texts)
+    result = _build_article_text(article)
+    assert len(result) <= 6500  # total cap is 6000 with a small buffer for headers
