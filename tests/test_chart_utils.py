@@ -1,7 +1,7 @@
 # ABOUTME: Tests for pure chart data helper functions.
 # ABOUTME: Validates aggregation logic without Streamlit/plotly dependencies.
 
-from chart_utils import section_score_data, source_chart_data
+from utils.chart import section_score_data, source_chart_data
 
 
 def test_source_chart_data_status_counts():

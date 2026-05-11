@@ -9,9 +9,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from cache import get_telemetry
-from chart_utils import section_score_data, source_chart_data
+from utils.chart import section_score_data, source_chart_data
 from constants import STAGE_META
-from dag_image import render_agent_loop, render_task_dag
+from utils.dag import render_agent_loop, render_task_dag
 from tools.diff import section_diff
 from models import (
     ContentGrade, EditorialEnvironment, ArticleAssessment,

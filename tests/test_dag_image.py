@@ -5,7 +5,7 @@ import io
 
 from PIL import Image
 
-from dag_image import render_agent_loop, render_task_dag
+from utils.dag import render_agent_loop, render_task_dag
 
 PNG_MAGIC = b"\x89PNG"
 

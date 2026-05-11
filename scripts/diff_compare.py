@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from diff_utils import heckel_diff_ops
+from utils.diff import heckel_diff_ops
 from tools.diff import _render_html, _word_diff_inline
 
 
@@ -100,7 +100,7 @@ def _render_mode_b(ops):
 # ── Algorithm A: current (paragraph-level SequenceMatcher) ───────────────────
 
 def diff_current(original: str, revised: str) -> str:
-    from diff_utils import section_diff_html
+    from utils.diff import section_diff_html
     return section_diff_html(original, revised)
 
 

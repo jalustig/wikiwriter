@@ -6,7 +6,7 @@ import re
 from typing import Literal
 
 from cache import record_tool_call
-from diff_utils import (
+from utils.diff import (
     Token, heckel_diff_ops, word_diff_ops,
     section_diff_html, section_diff_text,
     _HAS_MDIFF, _HAS_SPACY,
