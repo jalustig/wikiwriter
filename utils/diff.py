@@ -230,18 +230,40 @@ _THEME_STYLE = """
 }
 </style>
 <script>
-(function() {
-  var app = document.querySelector('[data-testid="stApp"]');
-  if (!app) return;
-  var bg = window.getComputedStyle(app).backgroundColor;
-  var m = bg.match(/rgb\\((\\d+),\\s*(\\d+),\\s*(\\d+)\\)/);
-  if (!m) return;
-  var lum = 0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3];
+(function apply(attempt) {
+  function getLum(el) {
+    if (!el) return null;
+    var s = window.getComputedStyle(el);
+    var bg = s.backgroundColor;
+    // Skip transparent (alpha == 0)
+    if (bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)') return null;
+    var m = bg.match(/\\d+/g);
+    if (!m || m.length < 3) return null;
+    // If alpha channel present and zero, skip
+    if (m.length >= 4 && +m[3] === 0) return null;
+    return 0.299 * +m[0] + 0.587 * +m[1] + 0.114 * +m[2];
+  }
+  var selectors = [
+    '[data-testid="stAppViewContainer"]',
+    '[data-testid="stApp"]',
+    '[data-testid="stMainBlockContainer"]',
+    '.main',
+    'body'
+  ];
+  var lum = null;
+  for (var i = 0; i < selectors.length; i++) {
+    lum = getLum(document.querySelector(selectors[i]));
+    if (lum !== null) break;
+  }
+  if (lum === null && attempt < 5) {
+    setTimeout(function() { apply(attempt + 1); }, 100);
+    return;
+  }
+  var isDark = lum !== null && lum < 128;
   document.querySelectorAll('.diff-root').forEach(function(el) {
-    if (lum < 128) el.classList.add('dark');
-    else el.classList.remove('dark');
+    el.classList.toggle('dark', isDark);
   });
-})();
+})(0);
 </script>
 """
 
