@@ -5,12 +5,29 @@ import diskcache
 import hashlib
 import json
 import os
+import shutil
+import sqlite3
 from functools import wraps
 from dotenv import load_dotenv
 
 load_dotenv()
-CACHE_DIR = os.getenv("CACHE_DIR", ".wikiwriter_cache")
-cache = diskcache.Cache(CACHE_DIR)
+_project_root = os.path.dirname(__file__)
+_cache_dir_raw = os.getenv("CACHE_DIR", ".wikiwriter_cache")
+CACHE_DIR = os.path.join(_project_root, _cache_dir_raw) if not os.path.isabs(_cache_dir_raw) else _cache_dir_raw
+
+
+def _open_cache(directory: str) -> diskcache.Cache:
+    try:
+        c = diskcache.Cache(directory)
+        # Verify the DB schema is intact by issuing a trivial query.
+        c.stats()
+        return c
+    except (sqlite3.DatabaseError, diskcache.Timeout):
+        shutil.rmtree(directory, ignore_errors=True)
+        return diskcache.Cache(directory)
+
+
+cache = _open_cache(CACHE_DIR)
 
 _stats: dict[str, int] = {"hits": 0, "misses": 0}
 _telemetry: dict = {
