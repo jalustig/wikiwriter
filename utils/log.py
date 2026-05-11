@@ -56,6 +56,16 @@ def _format_block(header: str, body: str | None, suffix: str = "") -> str:
     return f"[{_ts()}] {header} >>>\n{indented}\n{close}\n\n"
 
 
+def log_run_header(url: str, started_at: str) -> None:
+    """Write the log file header block."""
+    _write(
+        "=" * 80 + "\n"
+        f"WikiWriter Run: {url}\n"
+        f"Started: {started_at}\n"
+        + "=" * 80 + "\n\n"
+    )
+
+
 def log_stage_event(stage: str, kind: str, message: str = "") -> None:
     """Write a stage lifecycle line: STAGE_START, STAGE_DONE, THINK, SUMMARY, ERROR."""
     parts = [kind, stage]

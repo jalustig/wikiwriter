@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from cache import get_cache_stats, reset_cache_stats, get_telemetry, reset_telemetry
 from dag import DAGExecutor
+from utils.log import set_log_sink, log_stage_event, log_run_header
 from models import (
     ProgressEvent, WikiArticle, SourceEvaluation,
     SectionResearch, SectionDraft,
@@ -134,6 +135,9 @@ class WikiWriterOrchestrator:
         start = datetime.now(timezone.utc)
         reset_cache_stats()
 
+        set_log_sink(f"logs/{ts}_{slug}.log")
+        log_run_header(url, start.isoformat())
+
         with open(f"logs/{ts}_{slug}.jsonl", "w") as log:
             def _write(entry: dict) -> None:
                 log.write(json.dumps(entry) + "\n")
@@ -142,6 +146,7 @@ class WikiWriterOrchestrator:
             _write({"type": "run_start", "url": url, "started_at": start.isoformat()})
             reset_telemetry()
 
+            seen_stages: set[str] = set()
             async for event in self._run(url):
                 elapsed = round((datetime.now(timezone.utc) - start).total_seconds(), 2)
                 entry: dict = {
@@ -153,6 +158,19 @@ class WikiWriterOrchestrator:
                     "cache": get_cache_stats(),
                 }
                 _write(entry)
+
+                if event.status == "running" and event.stage not in seen_stages:
+                    seen_stages.add(event.stage)
+                    log_stage_event(event.stage, "STAGE_START")
+                elif event.status == "done" and event.stage in seen_stages:
+                    log_stage_event(event.stage, "STAGE_DONE", event.message or "")
+                elif event.status == "thinking":
+                    log_stage_event(event.stage, "THINK", event.message or "")
+                elif event.status == "summary":
+                    log_stage_event(event.stage, "SUMMARY", event.message or "")
+                elif event.status == "error":
+                    log_stage_event(event.stage, "ERROR", event.message or "")
+
                 yield event
 
             _write({
