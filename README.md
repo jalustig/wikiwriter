@@ -6,6 +6,8 @@ What would it take to use AI to scale contributions to Wikipedia? WikiWriter is 
 
 WikiWriter takes a Wikipedia article URL, reads the article and the human environment around it, and produces a sourced, critiqued edit proposal for human review. It does not submit anything — a human reviews the diff, the source audit, and the reasoning trace, then decides whether to apply it.
 
+WikiWriter operates as a `streamlit` web app and also offers a CLI version via `cli.py`.
+
 ---
 
 ## What Makes This Interesting
@@ -61,6 +63,8 @@ WikiWriter was built as a time-boxed prototype. These are the concerns that shap
 **Correctness before cleverness.** The caching layer (disk-backed, keyed on prompt hash) was built early because iteration speed matters more than raw capability during development. The DAG executor was kept simple — topological sort, asyncio task launch, event-driven completion — rather than reaching for a task queue framework. The editorial environment analysis uses deterministic regex and counter-based metrics before reaching for an LLM, because the cheap path is more reliable.
 
 **Alignment as a design constraint, not an afterthought.** The decision to make WikiWriter read-only, human-gated, and transparent about its reasoning is not a policy compliance checkbox. It is a direct response to documented failure modes in deployed AI agents. The system is designed to be the kind of agent that a skeptical Wikipedia editor would find credible, not just the kind that produces plausible output.
+
+**Custom `diff` function for prose.** General-purpose diff algorithms — including the one used in the Wikipedia UI — are optimized for code: they operate line by line, treating each line as an atomic unit. That works well when lines are short and semantically independent. Prose is different: paragraphs are long, sentences flow across lines, and a small word change deep in a paragraph produces a noisy, hard-to-read diff. WikiWriter uses a custom diff that splits on sentence boundaries rather than newlines, producing diffs that are readable by a human editor at a glance — which is essential when the human is the final gate before any edit touches a live article.
 
 ---
 
