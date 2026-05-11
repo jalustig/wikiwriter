@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from cache import cache, cache_key, record_tool_call
 from utils.log import log_tool_call
 from tools.wayback import get_archive_url
+from tools.academic import _extract_citation_pdf_url
 
 _MIN_BODY_CHARS = 200
 
@@ -180,6 +181,18 @@ async def fetch_readable(url: str) -> str:
             result = await extract_pdf_text(pdf_path)
             cache.set(_key, result, expire=7 * 24 * 3600)
             return result
+
+    # For any other HTML page with a citation_pdf_url meta tag (e.g. arxiv abstract pages),
+    # fetch the PDF directly for richer content
+    if not doi and html:
+        if pdf_url := _extract_citation_pdf_url(html):
+            from tools.pdf import extract_pdf_text
+            try:
+                result = await extract_pdf_text(pdf_url)
+                cache.set(_key, result, expire=7 * 24 * 3600)
+                return result
+            except Exception:
+                pass  # Fall through to HTML text extraction
 
     result = _html_to_text(html or "")
     cache.set(_key, result, expire=7 * 24 * 3600)

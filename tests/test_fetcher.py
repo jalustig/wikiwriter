@@ -1,7 +1,7 @@
 # ABOUTME: Tests for fetcher pure logic — Playwright trigger condition, CAPTCHA detection, DOI extraction.
 # ABOUTME: Tests heuristics without actual HTTP calls.
 
-from tools.fetcher import _needs_playwright, _has_captcha, _extract_doi
+from tools.fetcher import _needs_playwright, _has_captcha, _extract_doi, _extract_citation_pdf_url
 
 
 def test_needs_playwright_403():
@@ -68,3 +68,23 @@ def test_extract_doi_pubmed():
 
 def test_extract_doi_with_path_segment():
     assert _extract_doi("https://doi.org/10.1126/science.1258351") == "10.1126/science.1258351"
+
+
+def test_extract_citation_pdf_url_name_attr():
+    html = '<html><head><meta name="citation_pdf_url" content="https://arxiv.org/pdf/1234.5678"></head></html>'
+    assert _extract_citation_pdf_url(html) == "https://arxiv.org/pdf/1234.5678"
+
+
+def test_extract_citation_pdf_url_property_attr():
+    html = '<html><head><meta property="citation_pdf_url" content="https://arxiv.org/pdf/1234.5678"></head></html>'
+    assert _extract_citation_pdf_url(html) == "https://arxiv.org/pdf/1234.5678"
+
+
+def test_extract_citation_pdf_url_missing():
+    html = "<html><head><title>No PDF here</title></head><body>Text only.</body></html>"
+    assert _extract_citation_pdf_url(html) is None
+
+
+def test_extract_citation_pdf_url_empty_content():
+    html = '<html><head><meta name="citation_pdf_url" content=""></head></html>'
+    assert _extract_citation_pdf_url(html) is None
