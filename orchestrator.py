@@ -302,11 +302,44 @@ class WikiWriterOrchestrator:
             },
         )
 
-        # ── ASSESS (WHAT) ────────────────────────────────────────────────────
+        # ── ASSESS (WHAT) — may loop through FOCUS for large articles ─────────
         yield ProgressEvent(stage="ASSESS", status="running", message="Assessing what the article needs...")
         assessment = await assess_article(
             article, article_summary, content_grade, environment, source_evals
         )
+
+        if assessment.needs_focus and not assessment.no_edit:
+            candidate_names = [s.name for s in assessment.sections if s.action == "EDIT"]
+            yield ProgressEvent(
+                stage="ASSESS", status="done",
+                message=(
+                    f"Pass 1 complete — {len(candidate_names)} candidates identified,"
+                    " reading section text…"
+                ),
+                data={"assessment": assessment.model_dump()},
+            )
+
+            # ── FOCUS ────────────────────────────────────────────────────────
+            yield ProgressEvent(
+                stage="FOCUS", status="running",
+                message=f"Reading {len(candidate_names)} candidate sections…",
+            )
+            focus_context = {"candidate_sections": candidate_names}
+            yield ProgressEvent(
+                stage="FOCUS", status="done",
+                message=f"Section text loaded for: {', '.join(candidate_names)}",
+            )
+
+            # ── ASSESS Pass 2 ────────────────────────────────────────────────
+            yield ProgressEvent(
+                stage="ASSESS", status="running",
+                message="Final section selection with full text context…",
+            )
+            assessment = await assess_article(
+                article, article_summary, content_grade, environment, source_evals,
+                focus_context=focus_context,
+            )
+
         sections_to_edit = [s for s in assessment.sections if s.action == "EDIT"]
         assess_ctx = {
             "article_title": article.title,
