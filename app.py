@@ -363,6 +363,7 @@ def run_and_render(url: str) -> None:
 
     with tab_debug:
         debug_ph = st.empty()
+        llm_ph = st.empty()
 
     with tab_log:
         log_ph = st.empty()
@@ -550,21 +551,25 @@ def run_and_render(url: str) -> None:
                             f"{proposal.output_grade.overall_score:.1f}/10")
                 col3.metric("Quality Delta", f"{proposal.quality_delta:+.1f}", delta_color="normal")
 
-            llm_entries = get_llm_log()
-            if llm_entries:
-                st.markdown("### LLM Calls")
-                for i, entry in enumerate(llm_entries, 1):
-                    tok = ""
-                    if entry["tokens_in"] is not None:
-                        tok = f" — {entry['tokens_in']}↑ {entry['tokens_out']}↓ tokens"
-                    status = "✓" if entry["response"] is not None else "⟳"
-                    label = f"{status} #{i} `{entry['worker']}` ({entry['model']}){tok}"
-                    with st.expander(label, expanded=False):
-                        st.markdown("**Prompt**")
-                        st.code(entry["prompt"], language=None)
-                        if entry["response"] is not None:
-                            st.markdown("**Response**")
-                            st.code(entry["response"], language=None)
+    def _refresh_llm_calls():
+        entries = get_llm_log()
+        with llm_ph.container():
+            st.markdown("### LLM Calls")
+            if not entries:
+                st.caption("_(no LLM calls yet)_")
+                return
+            for i, entry in enumerate(entries, 1):
+                tok = ""
+                if entry["tokens_in"] is not None:
+                    tok = f" — {entry['tokens_in']}↑ {entry['tokens_out']}↓ tokens"
+                status = "✓" if entry["response"] is not None else "⟳"
+                label = f"{status} #{i} `{entry['worker']}` ({entry['model']}){tok}"
+                with st.expander(label, expanded=False):
+                    st.markdown("**Prompt**")
+                    st.code(entry["prompt"], language=None)
+                    if entry["response"] is not None:
+                        st.markdown("**Response**")
+                        st.code(entry["response"], language=None)
 
     def _refresh_log():
         path = get_log_path() or st.session_state.get("log_path")
@@ -609,6 +614,7 @@ def run_and_render(url: str) -> None:
                 if "\n" not in event.message:
                     _refresh_status(event.message)
                 _refresh_telemetry()
+                _refresh_llm_calls()
 
             elif event.status == "running":
                 _, running_label, _ = STAGE_META.get(stage, ("•", stage, stage))
@@ -649,12 +655,14 @@ def run_and_render(url: str) -> None:
                 _refresh_loop_image()
                 _refresh_stage_ph(stage)
                 _render_debug(state["accumulated"])
+                _refresh_llm_calls()
                 _refresh_telemetry()
 
             elif event.status == "summary":
                 effective_stage = state["current_stage"] or stage
                 state["stage_summaries"][_ph_key(effective_stage)] = event.message
                 _refresh_stage_ph(effective_stage)
+                _refresh_llm_calls()
                 _refresh_telemetry()
 
             elif event.status == "error":
