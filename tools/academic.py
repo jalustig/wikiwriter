@@ -12,6 +12,8 @@ from urllib.parse import urljoin, unquote
 import httpx
 from bs4 import BeautifulSoup
 
+from cache import record_tool_call
+
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -152,6 +154,7 @@ async def find_oa_pdf(doi: str, landing_html: str, base_url: str) -> str | None:
       4. Semantic Scholar — good coverage of CS/ML/biomedical
       5. Page link scan — catches /pdf/ paths and direct .pdf hrefs
     """
+    record_tool_call("academic")
     # 1. Already downloaded
     if path := local_pdf(doi):
         return path

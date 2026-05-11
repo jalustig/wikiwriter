@@ -8,7 +8,7 @@ import os
 import httpx
 import pypdf
 
-from cache import cached
+from cache import cached, record_tool_call
 
 _MAX_CHARS = 8000
 _HEADERS = {
@@ -41,6 +41,7 @@ def _extract_from_bytes(pdf_bytes: bytes) -> str:
 @cached("page_text", ttl=7 * 24 * 3600)
 async def extract_pdf_text(source: str) -> str:
     """Extract text from a PDF file path or URL. Returns up to 8000 chars."""
+    record_tool_call("pdf")
     if _is_local_path(source):
         expanded = os.path.expanduser(source)
         loop = asyncio.get_event_loop()
