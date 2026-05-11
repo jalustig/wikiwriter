@@ -36,6 +36,7 @@ _telemetry: dict = {
     "tokens_out": 0,
     "tool_calls": {},   # tool_name -> count
 }
+_llm_log: list[dict] = []
 
 
 def get_cache_stats() -> dict[str, int]:
@@ -76,6 +77,30 @@ def reset_telemetry() -> None:
     _telemetry["tokens_in"] = 0
     _telemetry["tokens_out"] = 0
     _telemetry["tool_calls"] = {}
+
+
+def append_llm_call(worker: str, model: str, prompt: str) -> None:
+    """Append a new LLM call entry; response fields filled in by append_llm_response."""
+    _llm_log.append({"worker": worker, "model": model, "prompt": prompt,
+                     "response": None, "tokens_in": None, "tokens_out": None})
+
+
+def append_llm_response(worker: str, response: str, tokens_in: int, tokens_out: int) -> None:
+    """Fill in response on the most recent pending entry for this worker."""
+    for entry in reversed(_llm_log):
+        if entry["worker"] == worker and entry["response"] is None:
+            entry["response"] = response
+            entry["tokens_in"] = tokens_in
+            entry["tokens_out"] = tokens_out
+            return
+
+
+def get_llm_log() -> list[dict]:
+    return list(_llm_log)
+
+
+def reset_llm_log() -> None:
+    _llm_log.clear()
 
 
 def cache_key(*args, **kwargs) -> str:

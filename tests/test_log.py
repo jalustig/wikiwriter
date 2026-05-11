@@ -3,6 +3,7 @@
 
 import io
 
+import cache as cache_mod
 import utils.log as log_mod
 
 
@@ -13,10 +14,12 @@ def _make_sink():
 
 def setup_function():
     log_mod.close_log_sink()
+    cache_mod.reset_llm_log()
 
 
 def teardown_function():
     log_mod.close_log_sink()
+    cache_mod.reset_llm_log()
 
 
 def test_silent_when_no_sink():
@@ -79,6 +82,38 @@ def test_set_log_sink_sets_path(tmp_path):
     with open(p) as fh:
         contents = fh.read()
     assert "STAGE_START FETCH" in contents
+
+
+def test_llm_log_records_call_and_response():
+    log_mod.log_llm_call("assess_article", "gpt-4", "tell me about X")
+    entries = cache_mod.get_llm_log()
+    assert len(entries) == 1
+    assert entries[0]["worker"] == "assess_article"
+    assert entries[0]["model"] == "gpt-4"
+    assert entries[0]["prompt"] == "tell me about X"
+    assert entries[0]["response"] is None
+
+    log_mod.log_llm_response("assess_article", '{"result": "ok"}', 50, 20)
+    entries = cache_mod.get_llm_log()
+    assert len(entries) == 1
+    assert entries[0]["response"] == '{"result": "ok"}'
+    assert entries[0]["tokens_in"] == 50
+    assert entries[0]["tokens_out"] == 20
+
+
+def test_llm_log_multiple_calls():
+    log_mod.log_llm_call("worker_a", "gpt-4", "prompt A")
+    log_mod.log_llm_call("worker_b", "gpt-4", "prompt B")
+    entries = cache_mod.get_llm_log()
+    assert len(entries) == 2
+    assert entries[0]["worker"] == "worker_a"
+    assert entries[1]["worker"] == "worker_b"
+
+
+def test_reset_llm_log():
+    log_mod.log_llm_call("w", "m", "p")
+    cache_mod.reset_llm_log()
+    assert cache_mod.get_llm_log() == []
 
 
 def test_log_run_header(tmp_path):

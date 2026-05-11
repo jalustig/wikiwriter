@@ -7,7 +7,7 @@ import os
 import re
 from datetime import datetime, timezone
 
-from cache import get_cache_stats, reset_cache_stats, get_telemetry, reset_telemetry
+from cache import get_cache_stats, reset_cache_stats, get_telemetry, reset_telemetry, reset_llm_log
 from dag import DAGExecutor
 from utils.log import set_log_sink, log_stage_event, log_run_header, close_log_sink
 from models import (
@@ -145,6 +145,7 @@ class WikiWriterOrchestrator:
 
             _write({"type": "run_start", "url": url, "started_at": start.isoformat()})
             reset_telemetry()
+            reset_llm_log()
 
             seen_stages: set[str] = set()
             async for event in self._run(url):

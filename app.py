@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
-from cache import get_telemetry
+from cache import get_telemetry, get_llm_log
 from utils.chart import section_score_data, source_chart_data
 from constants import STAGE_META
 from utils.dag import render_agent_loop, render_task_dag
@@ -549,6 +549,22 @@ def run_and_render(url: str) -> None:
                             proposal.output_grade.letter_grade,
                             f"{proposal.output_grade.overall_score:.1f}/10")
                 col3.metric("Quality Delta", f"{proposal.quality_delta:+.1f}", delta_color="normal")
+
+            llm_entries = get_llm_log()
+            if llm_entries:
+                st.markdown("### LLM Calls")
+                for i, entry in enumerate(llm_entries, 1):
+                    tok = ""
+                    if entry["tokens_in"] is not None:
+                        tok = f" — {entry['tokens_in']}↑ {entry['tokens_out']}↓ tokens"
+                    status = "✓" if entry["response"] is not None else "⟳"
+                    label = f"{status} #{i} `{entry['worker']}` ({entry['model']}){tok}"
+                    with st.expander(label, expanded=False):
+                        st.markdown("**Prompt**")
+                        st.code(entry["prompt"], language=None)
+                        if entry["response"] is not None:
+                            st.markdown("**Response**")
+                            st.code(entry["response"], language=None)
 
     def _refresh_log():
         path = get_log_path() or st.session_state.get("log_path")

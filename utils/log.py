@@ -7,6 +7,8 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import IO
 
+import cache as _cache
+
 _sink: ContextVar[IO | None] = ContextVar("_log_sink", default=None)
 _sink_path: ContextVar[str | None] = ContextVar("_log_sink_path", default=None)
 _lock = threading.Lock()
@@ -78,12 +80,14 @@ def log_llm_call(worker: str, model: str, prompt: str) -> None:
     header = f"[{_ts()}] LLM_CALL worker={worker} model={model}\n\n"
     prompt_block = _format_block("PROMPT", prompt)
     _write(header + prompt_block)
+    _cache.append_llm_call(worker, model, prompt)
 
 
 def log_llm_response(worker: str, response_text: str, tokens_in: int, tokens_out: int) -> None:
     suffix = f"tokens_in={tokens_in} tokens_out={tokens_out}"
     header = f"LLM_RESPONSE worker={worker}"
     _write(_format_block(header, response_text, suffix))
+    _cache.append_llm_response(worker, response_text, tokens_in, tokens_out)
 
 
 def log_tool_call(tool: str, args: dict | None = None) -> None:
