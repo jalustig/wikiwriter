@@ -27,14 +27,10 @@ _TOTAL_TEXT_LIMIT = 6000
 def _build_article_text(
     article: "WikiArticle",
     per_section_limit: int = _PER_SECTION_LIMIT,
-    candidate_sections: list[str] | None = None,
-    candidate_full_limit: int = 3000,
 ) -> str:
     """Build article text for the assess prompt.
 
-    For Pass 1 (candidate_sections=None): first per_section_limit chars of each section.
-    For Pass 2 (candidate_sections provided): full text (up to candidate_full_limit) for
-    candidates, truncated snippets for all others.
+    Takes the first per_section_limit chars of each section, capped at _TOTAL_TEXT_LIMIT overall.
     """
     parts = []
     total = 0
@@ -42,10 +38,7 @@ def _build_article_text(
         text = article.section_texts.get(name, "")
         if not text.strip():
             continue
-        if candidate_sections is not None and name in candidate_sections:
-            snippet = text[:candidate_full_limit]
-        else:
-            snippet = text[:per_section_limit]
+        snippet = text[:per_section_limit]
         if total + len(snippet) > _TOTAL_TEXT_LIMIT:
             remaining = _TOTAL_TEXT_LIMIT - total
             if remaining <= 0:

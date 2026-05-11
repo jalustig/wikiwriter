@@ -255,4 +255,4 @@ def test_build_article_text_respects_total_cap():
     texts = {s: "word " * 200 for s in sections}
     article = _make_wiki_article(sections, texts)
     result = _build_article_text(article)
-    assert len(result) <= 6500  # total cap is 6000 with a small buffer for headers
+    assert len(result) <= 6200  # 6000 chars of text + ~200 chars for section headers and separators
