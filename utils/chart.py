@@ -14,7 +14,15 @@ def source_chart_data(audit: list[dict]) -> tuple[dict[str, int], dict[str, int]
     return status_counts, type_counts
 
 
-def section_score_data(section_grades: dict[str, float]) -> tuple[list[str], list[float]]:
-    """Return (sections, scores) sorted by score ascending for a horizontal bar chart."""
-    pairs = sorted(section_grades.items(), key=lambda x: x[1])
+def section_score_data(
+    section_grades: dict[str, float],
+    section_order: list[str] | None = None,
+) -> tuple[list[str], list[float]]:
+    """Return (sections, scores) in article order (falling back to score-ascending)."""
+    if section_order:
+        ordered = [(s, section_grades[s]) for s in section_order if s in section_grades]
+        remainder = [(s, v) for s, v in section_grades.items() if s not in set(section_order)]
+        pairs = ordered + sorted(remainder, key=lambda x: x[1])
+    else:
+        pairs = sorted(section_grades.items(), key=lambda x: x[1])
     return [p[0] for p in pairs], [p[1] for p in pairs]

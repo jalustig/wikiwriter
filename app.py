@@ -251,8 +251,8 @@ def render_source_charts(audit: list) -> None:
         st.plotly_chart(fig, use_container_width=True)
 
 
-def render_section_scores(section_grades: dict) -> None:
-    sections, scores = section_score_data(section_grades)
+def render_section_scores(section_grades: dict, section_order: list[str] | None = None) -> None:
+    sections, scores = section_score_data(section_grades, section_order)
     if not sections:
         return
     fig = go.Figure(go.Bar(
@@ -311,7 +311,8 @@ def render_stage_results(stage: str, acc: dict) -> None:
         if "grade" in acc:
             grade = ContentGrade.model_validate(acc["grade"])
             if grade.section_grades:
-                render_section_scores(grade.section_grades)
+                section_order = acc.get("article", {}).get("sections", [])
+                render_section_scores(grade.section_grades, section_order)
     elif stage == "ASSESS" and "assessment" in acc:
         render_assessment_summary(ArticleAssessment.model_validate(acc["assessment"]))
     elif stage == "PLAN" and "dag" in acc and acc["dag"]:

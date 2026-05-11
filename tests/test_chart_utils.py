@@ -48,3 +48,20 @@ def test_section_score_data_empty():
     sections, scores = section_score_data({})
     assert sections == []
     assert scores == []
+
+
+def test_section_score_data_article_order():
+    grades = {"Intro": 8.0, "History": 5.0, "See also": 3.0}
+    order = ["Intro", "History", "See also"]
+    sections, scores = section_score_data(grades, order)
+    assert sections == ["Intro", "History", "See also"]
+    assert scores == [8.0, 5.0, 3.0]
+
+
+def test_section_score_data_partial_order():
+    # sections not in order fall back to score-ascending at the end
+    grades = {"Intro": 8.0, "History": 5.0, "Orphan": 2.0}
+    order = ["Intro", "History"]
+    sections, scores = section_score_data(grades, order)
+    assert sections == ["Intro", "History", "Orphan"]
+    assert scores == [8.0, 5.0, 2.0]
