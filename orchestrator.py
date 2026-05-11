@@ -166,13 +166,14 @@ class WikiWriterOrchestrator:
         # ── FETCH ─────────────────────────────────────────────────────────────
         yield ProgressEvent(stage="FETCH", status="running", message=f"Fetching {url}...")
         article = await fetch_article(url)
+        lead_text = article.section_texts.get("Lead", "")[:1200]
         async for t in _narrate("fetch", {
             "article_title": article.title,
             "assessment_class": article.assessment_class or "unrated",
             "n_sections": len(article.sections),
             "n_citations": len(article.citations),
             "sections": article.sections[:12],
-            "intro_text": next((v for k, v in article.section_texts.items() if not k), "")[:1200],
+            "intro_text": lead_text,
         }):
             yield t
         async for s in _emit_summary("fetch", {
@@ -181,6 +182,7 @@ class WikiWriterOrchestrator:
             "n_sections": len(article.sections),
             "n_citations": len(article.citations),
             "sections": article.sections[:12],
+            "intro_text": lead_text,
         }):
             yield s
         yield ProgressEvent(
@@ -667,6 +669,14 @@ class WikiWriterOrchestrator:
             stage="GRADE", status="done",
             message="Edit proposal ready.",
             data={"proposal": proposal.model_dump()},
+        )
+
+        # ── OUTPUT ───────────────────────────────────────────────────────────
+        yield ProgressEvent(stage="OUTPUT", status="running", message="Preparing final output...")
+        yield ProgressEvent(
+            stage="OUTPUT", status="done",
+            message=f"{len(all_section_drafts)} section(s) changed",
+            data={"assembled_wikitext": assembled},
         )
 
     # ── DAG task handlers ─────────────────────────────────────────────────────

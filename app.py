@@ -19,7 +19,7 @@ from models import (
 )
 from orchestrator import WikiWriterOrchestrator
 
-_PIPELINE_STAGES = ["FETCH", "GATHER", "ASSESS", "PLAN", "EXEC", "CRITIQUE", "GRADE", "SUMMARIZE"]
+_PIPELINE_STAGES = ["FETCH", "GATHER", "ASSESS", "PLAN", "EXEC", "CRITIQUE", "GRADE", "SUMMARIZE", "OUTPUT"]
 
 CAUTION_COLORS = {"LOW": "green", "MODERATE": "orange", "HIGH": "red", "CRITICAL": "red"}
 VERDICT_COLORS = {
@@ -116,6 +116,48 @@ def render_diff_view(section_drafts: list) -> None:
         return
     for draft in section_drafts:
         render_section_diff(draft)
+
+
+def render_output_stage(acc: dict) -> None:
+    article_data = acc.get("article", {})
+    article_sections = article_data.get("sections", [])
+    section_drafts_raw = acc.get("section_drafts", [])
+    assembled = acc.get("assembled_wikitext", "")
+
+    if not section_drafts_raw:
+        st.write("No output available.")
+        return
+
+    draft_by_section = {d["section_name"]: d for d in section_drafts_raw}
+
+    st.subheader("Changes by Section")
+    for section_name in article_sections:
+        draft = draft_by_section.get(section_name)
+        if draft is None:
+            continue
+        orig, revised = draft["original_text"], draft["revised_text"]
+        is_new = not orig.strip()
+        changes = draft.get("changes_made", [])
+        change_label = changes[0] if changes else "edited"
+        if is_new:
+            label = f"**{section_name}** — New section: {change_label}"
+        else:
+            label = f"**{section_name}** — Expanded: {change_label}"
+        with st.expander(label, expanded=False):
+            if orig.strip() == revised.strip():
+                st.write("_(no text changes)_")
+            else:
+                st.html(section_diff(orig, revised, output="html"))
+
+    if assembled:
+        st.divider()
+        st.subheader("Download Final Article")
+        st.download_button(
+            label="⬇ Download wikitext",
+            data=assembled,
+            file_name=f"{article_data.get('title', 'article').replace(' ', '_')}.wiki",
+            mime="text/plain",
+        )
 
 
 def render_critique_panel(critique: CritiqueResult) -> None:
@@ -277,6 +319,8 @@ def render_stage_results(stage: str, acc: dict) -> None:
         if "section_drafts" in acc:
             st.divider()
             render_diff_view(acc["section_drafts"])
+    elif stage == "OUTPUT":
+        render_output_stage(acc)
 
 
 # ── Live streaming runner ──────────────────────────────────────────────────────

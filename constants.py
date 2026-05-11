@@ -10,5 +10,6 @@ STAGE_META = {
     "CRITIQUE":  ("🔬", "Critiquing sections…",        "Critique done"),
     "GRADE":     ("📈", "Scoring output…",             "Output scored"),
     "SUMMARIZE": ("📝", "Writing editorial summary…",  "Summary written"),
+    "OUTPUT":    ("📄", "Preparing final output…",      "Output ready"),
     "DAG":       ("⚙️",  "Running…",                   "Done"),
 }

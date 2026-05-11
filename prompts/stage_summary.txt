@@ -4,6 +4,9 @@ Write 2-3 sentences. Be specific and factual — use actual names, numbers, sect
 Do NOT narrate your thought process; state the outcomes and decisions directly.
 Do NOT start with "I" or "We". No bullet points, no headers.
 
+If the stage is "fetch": your summary MUST cover (a) what the article is about in one sentence, and
+(b) an initial scope read — what the article currently covers and what it appears to omit or leave thin.
+
 Stage: {stage}
 Context:
 {context}
