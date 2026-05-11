@@ -25,7 +25,7 @@ async def summarize_stage(stage: str, context: dict) -> str:
         response = await _client.chat.completions.create(
             model=_MODEL,
             messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=150,
+            max_completion_tokens=750,
             temperature=0.4,
         )
         record_llm_tokens(response.usage)
