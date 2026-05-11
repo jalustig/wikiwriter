@@ -79,3 +79,14 @@ def test_set_log_sink_sets_path(tmp_path):
     with open(p) as fh:
         contents = fh.read()
     assert "STAGE_START FETCH" in contents
+
+
+def test_log_run_header(tmp_path):
+    p = str(tmp_path / "header.log")
+    log_mod.set_log_sink(p)
+    log_mod.log_run_header("https://en.wikipedia.org/wiki/Test", "2026-05-11T14:00:00Z")
+    with open(p) as fh:
+        contents = fh.read()
+    assert "WikiWriter Run: https://en.wikipedia.org/wiki/Test" in contents
+    assert "Started: 2026-05-11T14:00:00Z" in contents
+    assert "=" * 80 in contents
