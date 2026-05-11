@@ -130,20 +130,21 @@ def render_output_stage(acc: dict) -> None:
 
     draft_by_section = {d["section_name"]: d for d in section_drafts_raw}
 
+    # Sections in original article order, then any new sections appended at end
+    original_set = set(article_sections)
+    new_section_names = [d["section_name"] for d in section_drafts_raw
+                         if d["section_name"] not in original_set]
+    ordered = [s for s in article_sections if s in draft_by_section] + new_section_names
+
     st.subheader("Changes by Section")
-    for section_name in article_sections:
-        draft = draft_by_section.get(section_name)
-        if draft is None:
-            continue
+    for section_name in ordered:
+        draft = draft_by_section[section_name]
         orig, revised = draft["original_text"], draft["revised_text"]
         is_new = not orig.strip()
         changes = draft.get("changes_made", [])
         change_label = changes[0] if changes else "edited"
-        if is_new:
-            label = f"**{section_name}** — New section: {change_label}"
-        else:
-            label = f"**{section_name}** — Expanded: {change_label}"
-        with st.expander(label, expanded=False):
+        label = f"**{section_name}** — {'New section' if is_new else 'Expanded'}: {change_label}"
+        with st.expander(label, expanded=True):
             if orig.strip() == revised.strip():
                 st.write("_(no text changes)_")
             else:

@@ -17,6 +17,8 @@ _PIPELINE_ROWS = [
     "EXEC",
     "CRITIQUE",
     "GRADE",
+    "SUMMARIZE",
+    "OUTPUT",
 ]
 
 # Canonical stage names used for status tracking (map parallel sub-stages to GATHER)
@@ -32,6 +34,8 @@ _STAGE_LABELS = {
     "EXEC":           "Execute",
     "CRITIQUE":       "Critique",
     "GRADE":          "Grade",
+    "SUMMARIZE":      "Summarize",
+    "OUTPUT":         "Output",
     "???":            "???",
 }
 
@@ -103,7 +107,7 @@ def render_agent_loop(
 
     # Compute row heights and total height
     n_rows = len(rows)
-    back_edge_extra = 40 if loop_count > 0 and "ASSESS" in done_stages else 0
+    back_edge_extra = 40 if "ASSESS" in done_stages else 0
     H = PAD + n_rows * NH + (n_rows - 1) * VG + PAD + back_edge_extra
 
     img = Image.new("RGB", (width, H), "#FFFFFF")
@@ -161,28 +165,29 @@ def render_agent_loop(
             draw.line([(top_cxs[0], mid_y), (top_cxs[-1], mid_y)], fill="#94A3B8", width=1)
             _draw_arrow(draw, bot_cxs[0], mid_y, bot_cxs[0], bot_cy)
 
-    # ── Back-edge if loop occurred (CRITIQUE → PLAN) ──────────────────────────
-    if loop_count > 0 and "PLAN" in pos and "CRITIQUE" in pos:
+    # ── Back-edge CRITIQUE → PLAN (always visible; red + count when loop has fired) ──
+    if "PLAN" in pos and "CRITIQUE" in pos:
         _, plan_cy = pos["PLAN"]
         _, crit_cy = pos["CRITIQUE"]
         right_x = PAD + NW + 4
+        edge_color = "#DC2626" if loop_count > 0 else "#94A3B8"
         pts = [
             (PAD + NW, crit_cy),
             (right_x + 2, crit_cy),
             (right_x + 2, plan_cy),
             (PAD + NW, plan_cy),
         ]
-        draw.line(pts, fill="#DC2626", width=2)
+        draw.line(pts, fill=edge_color, width=2)
         ax = PAD + NW
         draw.polygon(
             [(ax + 7, plan_cy - 4), (ax + 7, plan_cy + 4), (ax, plan_cy)],
-            fill="#DC2626",
+            fill=edge_color,
         )
-        label = f"loop {loop_count}"
-        draw.text(
-            (right_x + 4, (plan_cy + crit_cy) // 2 - 5),
-            label, fill="#DC2626", font=f_small,
-        )
+        if loop_count > 0:
+            draw.text(
+                (right_x + 4, (plan_cy + crit_cy) // 2 - 5),
+                f"loop {loop_count}", fill=edge_color, font=f_small,
+            )
 
     # ── Draw nodes ────────────────────────────────────────────────────────────
     for ri, row in enumerate(rows):
