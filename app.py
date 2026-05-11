@@ -18,6 +18,7 @@ from models import (
     CritiqueResult, EditProposal,
 )
 from orchestrator import WikiWriterOrchestrator
+from utils.log import get_log_path
 
 _PIPELINE_STAGES = ["FETCH", "GATHER", "ASSESS", "PLAN", "EXEC", "CRITIQUE", "GRADE", "SUMMARIZE", "OUTPUT"]
 
@@ -343,7 +344,7 @@ def run_and_render(url: str) -> None:
     dag_ph.image(render_task_dag({}, set(), set()), width="stretch")
 
     # ── Main tabs ──────────────────────────────────────────────────────────────
-    tab_run, tab_debug = st.tabs(["▶ Run", "🔬 Debug"])
+    tab_run, tab_debug, tab_log = st.tabs(["▶ Run", "🔬 Debug", "📋 Log"])
 
     # Placeholders created dynamically as stages are entered; keyed by (cycle, stage).
     # status/counter are appended to run_container on demand too.
@@ -354,6 +355,12 @@ def run_and_render(url: str) -> None:
 
     with tab_debug:
         debug_ph = st.empty()
+
+    with tab_log:
+        st.checkbox("🔴 Live tail (1s refresh)", key="log_live")
+        log_ph = st.empty()
+        log_dl_ph = st.empty()
+        log_ph.info("No run started yet. Start a run to see the log.")
 
     # Bottom status bar (full width, outside tabs)
     telemetry_ph = st.empty()
@@ -537,6 +544,21 @@ def run_and_render(url: str) -> None:
                             f"{proposal.output_grade.overall_score:.1f}/10")
                 col3.metric("Quality Delta", f"{proposal.quality_delta:+.1f}", delta_color="normal")
 
+    def _refresh_log():
+        path = get_log_path()
+        if not path:
+            return
+        try:
+            contents = open(path).read()
+        except OSError:
+            return
+        with log_ph.container():
+            st.code(contents, language=None)
+        st.session_state["log_last_refresh"] = time.monotonic()
+
+    if "log_last_refresh" not in st.session_state:
+        st.session_state["log_last_refresh"] = 0.0
+
     async def _stream():
         async for event in WikiWriterOrchestrator().run(url):
             stage = event.stage
@@ -612,9 +634,29 @@ def run_and_render(url: str) -> None:
                 _append_thought(stage, f"❌ **{event.message}**")
                 _refresh_loop_image()
 
+            # Refresh log tab at appropriate polling interval
+            now = time.monotonic()
+            interval = 1.0 if st.session_state.get("log_live") else 5.0
+            if now - st.session_state.get("log_last_refresh", 0.0) >= interval:
+                _refresh_log()
+
     asyncio.run(_stream())
     status_ph.empty()
     _refresh_telemetry()
+    _refresh_log()
+    path = get_log_path()
+    if path:
+        try:
+            log_contents = open(path).read()
+            with log_dl_ph.container():
+                st.download_button(
+                    label="⬇ Download .log file",
+                    data=log_contents,
+                    file_name=path.split("/")[-1],
+                    mime="text/plain",
+                )
+        except OSError:
+            pass
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
