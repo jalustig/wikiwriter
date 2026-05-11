@@ -15,6 +15,13 @@ from models import WikiArticle, Citation
 MEDIAWIKI_API = "https://en.wikipedia.org/w/api.php"
 HEADERS = {"User-Agent": "WikiWriter/1.0"}
 
+
+class RateLimitedError(Exception):
+    def __init__(self, retry_after: int | None):
+        self.retry_after = retry_after
+        super().__init__(f"Rate limited; retry after {retry_after}s" if retry_after else "Rate limited")
+
+
 _wiki = wikipediaapi.Wikipedia(language="en", user_agent="WikiWriter/1.0")
 
 
@@ -106,6 +113,10 @@ def fetch_random_article() -> tuple[str, str, str]:
         headers=HEADERS,
         timeout=10,
     )
+    if resp.status_code == 429:
+        retry_after_raw = resp.headers.get("Retry-After")
+        retry_after = int(retry_after_raw) if retry_after_raw and retry_after_raw.isdigit() else None
+        raise RateLimitedError(retry_after)
     resp.raise_for_status()
     data = resp.json()
     title = data["query"]["random"][0]["title"]

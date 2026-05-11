@@ -1,12 +1,12 @@
 # ABOUTME: Tests for fetch_random_article — verifies URL construction, title, and description parsing.
 # ABOUTME: Patches httpx.get to avoid real network calls.
 
-import json
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
-from tools.wikipedia import fetch_random_article
+from tools.wikipedia import fetch_random_article, RateLimitedError
 
 
 FAKE_API_RESPONSE = {
@@ -50,6 +50,32 @@ def test_fetch_random_article_missing_description_returns_empty_string():
 
     assert title == "Grafana"
     assert description == ""
+
+
+def test_fetch_random_article_429_raises_rate_limited_with_retry_after():
+    mock = MagicMock()
+    mock.status_code = 429
+    mock.headers = {"Retry-After": "42"}
+    mock.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "429", request=MagicMock(), response=mock
+    )
+    with patch("tools.wikipedia.httpx.get", return_value=mock):
+        with pytest.raises(RateLimitedError) as exc_info:
+            fetch_random_article()
+    assert exc_info.value.retry_after == 42
+
+
+def test_fetch_random_article_429_no_retry_after_header():
+    mock = MagicMock()
+    mock.status_code = 429
+    mock.headers = {}
+    mock.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "429", request=MagicMock(), response=mock
+    )
+    with patch("tools.wikipedia.httpx.get", return_value=mock):
+        with pytest.raises(RateLimitedError) as exc_info:
+            fetch_random_article()
+    assert exc_info.value.retry_after is None
 
 
 def test_fetch_random_article_encodes_spaces_in_url():

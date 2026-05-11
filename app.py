@@ -18,7 +18,7 @@ from models import (
     CritiqueResult, EditProposal,
 )
 from orchestrator import WikiWriterOrchestrator
-from tools.wikipedia import fetch_random_article
+from tools.wikipedia import fetch_random_article, RateLimitedError
 from utils.log import get_log_path
 
 _PIPELINE_STAGES = ["FETCH", "GATHER", "ASSESS", "PLAN", "EXEC", "CRITIQUE", "GRADE", "SUMMARIZE", "OUTPUT"]
@@ -691,17 +691,25 @@ def main():
         st.caption("Quality-first Wikipedia editing agent")
 
     if st.button("🎲 Random article"):
-        rand_url, rand_title, rand_desc = fetch_random_article()
-        st.session_state["random_article"] = {"url": rand_url, "title": rand_title, "description": rand_desc}
+        try:
+            rand_url, rand_title, rand_desc = fetch_random_article()
+            st.session_state["random_article"] = {
+                "url": rand_url, "title": rand_title, "description": rand_desc,
+            }
+        except RateLimitedError as e:
+            if e.retry_after:
+                st.warning(f"Wikipedia is rate limiting us. Please try again in {e.retry_after}s.")
+            else:
+                st.warning("Wikipedia is rate limiting us. Please try again shortly.")
 
     random_article = st.session_state.get("random_article")
-    prefill_url = random_article["url"] if random_article else ""
+    prefill_url = random_article["url"] if random_article else "https://en.wikipedia.org/wiki/Grafana"
 
     with st.form("url_form"):
         url = st.text_input(
             "Wikipedia article URL",
             value=prefill_url,
-            placeholder="https://en.wikipedia.org/wiki/Grafana",
+            placeholder=prefill_url,
         )
         analyse = st.form_submit_button("Analyse & draft edit", type="primary")
 
