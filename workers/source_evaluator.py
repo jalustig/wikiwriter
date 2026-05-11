@@ -86,9 +86,9 @@ class SourceEvaluator:
         )
 
         log_llm_call("source_evaluator", self.model, prompt)
+        record_llm_start()
         for attempt in range(3):
             try:
-                record_llm_start()
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
