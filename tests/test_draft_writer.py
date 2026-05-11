@@ -1,8 +1,28 @@
 # ABOUTME: Tests for DraftWriter pure logic — no LLM calls.
-# ABOUTME: Tests source report assembly and diff generation.
+# ABOUTME: Tests source report assembly, diff generation, and article assembly.
 
-from models import SectionPlan, SourceEvaluation
+from models import SectionPlan, SourceEvaluation, WikiArticle, SectionDraft
 from workers.draft_writer import _assemble_source_report, _build_diff, _draft_cache_key
+from workers.synthesis_writer import _assemble_with_drafts
+
+
+def _make_article(sections, section_texts):
+    return WikiArticle(
+        title="Test", url="https://en.wikipedia.org/wiki/Test",
+        wikitext="", sections=sections, section_texts=section_texts,
+        citations=[], assessment_class=None,
+    )
+
+
+def _make_draft(section_name, original_text, revised_text):
+    return SectionDraft(
+        section_name=section_name,
+        original_text=original_text,
+        revised_text=revised_text,
+        changes_made=[],
+        citations_added=[],
+        citations_removed=[],
+    )
 
 
 def _make_source(url, score, recommendation, topic_coverage_summary, status="LIVE"):
@@ -116,3 +136,59 @@ def test_draft_cache_key_same_for_identical_plans():
     plan_b = SectionPlan(name="Lead", modes=["Expand"], rationale="Mode: Expand")
 
     assert _draft_cache_key(url, plan_a, sources) == _draft_cache_key(url, plan_b, sources)
+
+
+# --- _assemble_with_drafts ---
+
+def test_assemble_substitutes_revised_text():
+    article = _make_article(
+        sections=["Lead", "History"],
+        section_texts={"Lead": "Old lead.", "History": "Old history."},
+    )
+    drafts = [_make_draft("History", "Old history.", "New history.")]
+    result = _assemble_with_drafts(article, drafts)
+    assert "New history." in result
+    assert "Old history." not in result
+
+
+def test_assemble_preserves_untouched_sections():
+    article = _make_article(
+        sections=["Lead", "History"],
+        section_texts={"Lead": "Lead text.", "History": "History text."},
+    )
+    result = _assemble_with_drafts(article, [])
+    assert "Lead text." in result
+    assert "History text." in result
+
+
+def test_assemble_appends_new_sections():
+    article = _make_article(
+        sections=["Lead"],
+        section_texts={"Lead": "Lead text."},
+    )
+    drafts = [_make_draft("New Section", "", "Brand new content.")]
+    result = _assemble_with_drafts(article, drafts)
+    assert "New Section" in result
+    assert "Brand new content." in result
+
+
+def test_assemble_new_section_after_existing():
+    article = _make_article(
+        sections=["Lead", "History"],
+        section_texts={"Lead": "Lead.", "History": "History."},
+    )
+    drafts = [_make_draft("Further reading", "", "See also these books.")]
+    result = _assemble_with_drafts(article, drafts)
+    history_pos = result.index("History.")
+    new_pos = result.index("See also these books.")
+    assert new_pos > history_pos
+
+
+def test_assemble_lead_has_no_header():
+    article = _make_article(
+        sections=["Lead", "History"],
+        section_texts={"Lead": "Intro text.", "History": "History."},
+    )
+    result = _assemble_with_drafts(article, [])
+    assert "== Lead ==" not in result
+    assert "== History ==" in result

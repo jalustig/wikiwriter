@@ -107,6 +107,21 @@ def _build_assessment(raw: dict, flip_flopped: set) -> ArticleAssessment:
     )
 
 
+_ENDMATTER = {
+    "references", "citations", "sources", "notes", "bibliography",
+    "further reading", "external links", "see also",
+}
+
+
+def _build_section_scores(sections: list[str], section_grades: dict[str, float]) -> str:
+    """Return per-section score lines, excluding end-matter sections."""
+    return "\n".join(
+        f"- {name}: {section_grades.get(name, 5.0):.1f}"
+        for name in sections
+        if name.lower() not in _ENDMATTER
+    )
+
+
 async def assess_article(
     article: WikiArticle,
     summary: ArticleSummary,
@@ -126,9 +141,7 @@ async def assess_article(
     dimension_scores = "\n".join(
         f"- {dim}: {score:.1f}" for dim, score in grade.dimension_scores.items()
     )
-    section_scores = "\n".join(
-        f"- {name}: {grade.section_grades.get(name, 5.0):.1f}" for name in article.sections
-    )
+    section_scores = _build_section_scores(article.sections, grade.section_grades)
     editor_norms = "\n".join(f"- {n}" for n in environment.editor_imposed_norms) or "None"
     policies = "\n".join(f"- {p}" for p in environment.policies_and_restrictions) or "None"
     flip = ", ".join(environment.flip_flopped_sections) or "None"

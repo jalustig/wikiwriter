@@ -15,9 +15,14 @@ _MODEL = os.getenv("DRAFT_MODEL", "gpt-5.4")
 
 
 def _assemble_with_drafts(article: WikiArticle, section_drafts: list[SectionDraft]) -> str:
-    """Substitute revised section texts into the article, preserving untouched sections."""
+    """Substitute revised section texts into the article, preserving untouched sections.
+
+    New sections (not in the original article) are appended after existing sections.
+    """
     revised_by_name = {d.section_name: d.revised_text for d in section_drafts}
+    original_set = set(article.sections)
     parts: list[str] = []
+
     for name in article.sections:
         text = revised_by_name.get(name) or article.section_texts.get(name, "")
         if text.strip():
@@ -26,6 +31,11 @@ def _assemble_with_drafts(article: WikiArticle, section_drafts: list[SectionDraf
                 parts.append(f"{header}\n{text}")
             else:
                 parts.append(text)
+
+    for draft in section_drafts:
+        if draft.section_name not in original_set and draft.revised_text.strip():
+            parts.append(f"== {draft.section_name} ==\n{draft.revised_text}")
+
     return "\n\n".join(parts)
 
 

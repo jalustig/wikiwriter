@@ -1,11 +1,10 @@
 # ABOUTME: Tests for assess_article worker — section cap enforcement and no-edit logic.
 # ABOUTME: Tests the deterministic post-LLM processing, not the LLM call itself.
 
-import pytest
 from models import (
-    ArticleAssessment, ArticleImportance, SectionDecision,
+    ArticleImportance, SectionDecision,
 )
-from workers.assess_article import _enforce_section_cap, _build_assessment
+from workers.assess_article import _enforce_section_cap, _build_assessment, _build_section_scores
 
 
 def _importance(tier="MAJOR"):
@@ -166,3 +165,39 @@ def test_scope_of_work_propagates_no_edit_path():
     raw["scope_of_work"] = "No editing will be performed due to BLP restrictions."
     result = _build_assessment(raw, flip_flopped=set())
     assert result.scope_of_work == raw["scope_of_work"]
+
+
+# ── _build_section_scores: endmatter filtering ─────────────────────────────
+
+def test_section_scores_excludes_references():
+    scores = _build_section_scores(["History", "References"], {"History": 6.0, "References": 8.0})
+    assert "History" in scores
+    assert "References" not in scores
+
+
+def test_section_scores_excludes_all_endmatter_variants():
+    endmatter = ["References", "Citations", "Sources", "Notes",
+                 "Bibliography", "Further reading", "External links", "See also"]
+    scores = _build_section_scores(endmatter, {})
+    assert scores == ""
+
+
+def test_section_scores_case_insensitive():
+    scores = _build_section_scores(["REFERENCES", "History"], {})
+    assert "REFERENCES" not in scores
+    assert "History" in scores
+
+
+def test_section_scores_preserves_content_sections():
+    sections = ["Lead", "History", "Reception", "References"]
+    grades = {"Lead": 7.0, "History": 5.5, "Reception": 8.0, "References": 9.0}
+    scores = _build_section_scores(sections, grades)
+    assert "Lead: 7.0" in scores
+    assert "History: 5.5" in scores
+    assert "Reception: 8.0" in scores
+    assert "References" not in scores
+
+
+def test_section_scores_defaults_missing_grade_to_5():
+    scores = _build_section_scores(["History"], {})
+    assert "History: 5.0" in scores
