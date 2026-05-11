@@ -20,7 +20,7 @@ Wikipedia editing sits at the intersection of two live problems in agentic AI:
 
 WikiWriter is a direct response to both problems.
 
----
+![Context diagram](docs/images/context-diagram.png)
 
 ## What Makes This Agentic
 
@@ -48,7 +48,112 @@ Human-in-the-loop is not a limitation imposed by policy. It is the trust archite
 
 ---
 
-## 2. AI Agent Decision Points
+## 2. Engineering & System Design Notes
+
+WikiWriter was built as a time-boxed prototype. These are the concerns that shaped the design:
+
+**System design under uncertainty.** The problem space is genuinely hard — source verification against the live web is brittle, LLM outputs are non-deterministic, and Wikipedia's editorial environment is adversarial to automated editing. The architecture is designed to fail gracefully: every external call has a fallback, every worker result is validated before use, and the pipeline discards bad output rather than passing it through. The question "what does this system do when it fails?" was asked at every stage.
+
+**Separation of concerns between decisions and execution.** The three decision points (Assess, Plan, Critique) are isolated LLM calls with scoped prompts. The orchestrator executes but does not decide; the workers decide but do not orchestrate. This makes each prompt auditable, each decision traceable, and the system testable in parts — you can unit-test the Assess worker against fixture articles without running the full pipeline.
+
+**Observability as a first-class requirement.** Every LLM call, every tool call, and every stage transition is logged with timestamps, token counts, and cache hit/miss status. The Streamlit UI surfaces the agent's thinking in real time — not just the final output, but the intermediate reasoning at each stage. This is not a demo concern; it is what makes the system trustworthy enough to put in front of a Wikipedia editor.
+
+**Correctness before cleverness.** The caching layer (disk-backed, keyed on prompt hash) was built early because iteration speed matters more than raw capability during development. The DAG executor was kept simple — topological sort, asyncio task launch, event-driven completion — rather than reaching for a task queue framework. The editorial environment analysis uses deterministic regex and counter-based metrics before reaching for an LLM, because the cheap path is more reliable.
+
+**Alignment as a design constraint, not an afterthought.** The decision to make WikiWriter read-only, human-gated, and transparent about its reasoning is not a policy compliance checkbox. It is a direct response to documented failure modes in deployed AI agents. The system is designed to be the kind of agent that a skeptical Wikipedia editor would find credible, not just the kind that produces plausible output.
+
+---
+
+## 3. What WikiWriter Does
+
+Give WikiWriter a Wikipedia article URL. It produces a reviewed edit proposal: a diff against the original article, a source audit, an editorial environment report, a quality grade before and after, and a critique transcript — all visible in the UI before the human decides whether to apply the edit.
+
+The pipeline has nine stages:
+
+| Stage | What happens |
+|---|---|
+| **Read article** | Fetch wikitext, sections, citations, and assessment class via Wikipedia API |
+| **Gather evidence** | Run three things in parallel: grade the article content, analyze the editorial environment (edit history + talk page), and audit every existing citation |
+| **Assess** | Decide importance tier, article class, which sections to edit and how — this is the WHAT |
+| **Focus** | If the article is long (i.e. not a "stub" article), then WikiWriter chooses certain sections to focus on and returns to the "Assess" stage |
+| **Plan** | Translate the assessment into an executable task DAG — this is the HOW |
+| **Execute** | Run the DAG: research sections, find new sources, draft edits — parallel where dependencies allow |
+| **Critique** | Evaluate each drafted section against Wikipedia policy dimensions (WP:V, WP:NPOV, WP:NOR, WP:WEIGHT) |
+| **Grade** | Score the output article on the same rubric as the input; compute the quality delta |
+| **Summarize** | Write an editorial summary and pre-formatted Wikipedia edit summary with AI-assistance disclosure |
+| **Output** | Present the full proposal in the review UI |
+
+If critique fails, the agent revises (up to two cycles). If the output grade is lower than the input grade, the agent re-plans from scratch.
+
+![Pipeline diagram](docs/images/pipeline.png)
+
+## 4. Architecture
+
+WikiWriter uses an **orchestrator / specialist worker** design. The orchestrator owns pipeline state, spawns workers, collects results, and makes routing decisions. Workers are stateless — each receives only the inputs it needs for its specific task and has no awareness of other workers or prior cycles. All inter-worker communication passes through the orchestrator.
+
+```
+┌─────────────────────────────────────┐
+│           ORCHESTRATOR              │
+│  Pipeline state · DAG execution     │
+│  Routing · Logging · Revision loops │
+└──────────────┬──────────────────────┘
+               │  spawns
+       ┌───────┴────────┐
+       ▼                ▼
+┌────────────┐   ┌────────────────┐
+│ SPECIALIST │   │  SPECIALIST    │
+│  WORKERS   │   │   WORKERS      │
+│ (stateless)│   │  (stateless)   │
+└────────────┘   └────────────────┘
+       │                │
+       └───────┬────────┘
+               ▼
+        ┌─────────────┐
+        │  TOOL LAYER │
+        │ Wikipedia · │
+        │ Web search  │
+        │ Wayback     │
+        │ HTTP fetch  │
+        └─────────────┘
+```
+
+**The DAG execution model.** The planner emits a machine-readable graph of task nodes. Each node specifies its worker type, parameters, and dependencies. The executor reads the DAG, launches all nodes whose dependencies are satisfied, and processes results as they arrive — naturally parallelizing independent work. A `research_section` node can run at the same time as another `research_section` node for a different section; `draft_section` nodes wait for their corresponding research to finish.
+
+This design means units of work are composable. Adding a new worker type (say, a contradiction analyzer) means adding a handler and a node type — the executor doesn't change.
+
+![Example task DAG](docs/images/dag.png)
+
+## 5. Key Technical Decisions
+
+**Source verification is a hard gate.** Every existing citation is fetched and read — not just checked for HTTP 200. The source evaluator reads the content and determines whether it actually supports the specific claim it is cited for. Dead links trigger a Wayback Machine lookup for the most recent archived version. If a source cannot be fetched and read, it is not recommended. This is the most expensive part of the pipeline and deliberately so.
+
+**Claim extraction before drafting.** Before any section is drafted, the claim extractor reads the section text and tags every factual claim as `cited`, `undercited`, `uncited`, or `consensus-uncited`. Consensus-uncited claims (basic historical dates, established scientific principles) are excluded from source discovery. Everything else queues for research. Draft writers receive this claim map as context — they know what needs sourcing before they write a word.
+
+**Editorial environment analysis.** The editorial context analyzer runs in parallel with the content grader on intake. It fetches the article's edit history and talk page, computes a 12-month revert rate, detects flip-flopped sections, identifies dominant editors, and extracts talk-page-imposed norms ("this article does not use X type of source per consensus in [archive]"). All of this feeds the planner. Sections with active flip-flop patterns are marked `DO NOT EDIT` by default.
+
+**Caching.** Every LLM call and every HTTP fetch is cached to disk, keyed on a hash of the prompt or URL. During development this means a run that has already fetched and graded a citation completes those steps instantly on retry. In the demo, it means the system can be shown running against real articles without burning API quota on repeated requests. Cache is never used across different prompts — the key is a hash of the full prompt text, so prompt changes invalidate the cache correctly.
+
+---
+
+## 6. Tools Available to the Agent
+
+Workers are not LLM-only — they call a tool layer for all external data. Every tool call is logged and counted in the telemetry bar at the bottom of the UI. All tools are read-only; there is no write path in the codebase.
+
+| Tool | What it does |
+|---|---|
+| **`wikipedia`** | Fetches article wikitext, sections, and citations via the MediaWiki REST API. Also fetches edit history (timestamps, authors, edit comments) and the talk page for editorial context analysis. |
+| **`fetch`** | General-purpose web fetcher. Cleans HTML to readable text using BeautifulSoup. Falls back to headless Playwright for JavaScript-rendered pages and CAPTCHA-gated sites. Used by the source evaluator to read the actual content of every cited URL. |
+| **`search`** | Tavily web search API. Used by source discovery workers to find new sources for uncited or undercited claims. Returns structured results ranked for LLM evaluation. |
+| **`wayback`** | Wayback Machine CDX API lookup. Called automatically when `fetch` finds a dead URL — returns the most recent archived copy, if one exists. Lets the agent recover citations that are broken but historically valid. |
+| **`academic`** | Open-access PDF discovery for academic papers identified by DOI. Checks Unpaywall and Semantic Scholar for free full-text PDFs, and scans citation landing pages for PDF links. Falls back to local storage if a PDF has already been downloaded. |
+| **`pdf`** | Extracts readable text from a PDF (local path or URL) using pypdf. Called when a source is a PDF rather than an HTML page. Output is capped at 8,000 characters. |
+| **`diff`** | Generates a section-by-section diff between the original article and the proposed edit. Renders as annotated HTML (for the UI) with inline citation tracking — added and removed citations are shown alongside the changed text. |
+
+The fetch → wayback fallback chain is the most important: it means a citation is only marked `DEAD` after both the live URL and the Wayback Machine have been tried. The academic → pdf chain extends this to paywalled journal papers, where the DOI can often be resolved to a free full-text copy.
+
+---
+
+## 7. Agent Alignment via Decision Points
 
 WikiWriter's AI Agent makes decisions at three distinct points in the agent loop in order to ensure accuracy and alignment. Each is a separate LLM call with a scoped prompt — the decisions are not made by the orchestrator, and they are not implicit in the code.
 
@@ -90,113 +195,6 @@ If the final output grade is *lower* than the input grade — the edits made thi
 
 ---
 
-## 3. What WikiWriter Does
-
-Give WikiWriter a Wikipedia article URL. It produces a reviewed edit proposal: a diff against the original article, a source audit, an editorial environment report, a quality grade before and after, and a critique transcript — all visible in the UI before the human decides whether to apply the edit.
-
-The pipeline has nine stages:
-
-| Stage | What happens |
-|---|---|
-| **Read article** | Fetch wikitext, sections, citations, and assessment class via Wikipedia API |
-| **Gather evidence** | Run three things in parallel: grade the article content, analyze the editorial environment (edit history + talk page), and audit every existing citation |
-| **Assess** | Decide importance tier, article class, which sections to edit and how — this is the WHAT |
-| **Focus** | If the article is long (i.e. not a "stub" article), then WikiWriter chooses certain sections to focus on and returns to the "Assess" stage |
-| **Plan** | Translate the assessment into an executable task DAG — this is the HOW |
-| **Execute** | Run the DAG: research sections, find new sources, draft edits — parallel where dependencies allow |
-| **Critique** | Evaluate each drafted section against Wikipedia policy dimensions (WP:V, WP:NPOV, WP:NOR, WP:WEIGHT) |
-| **Grade** | Score the output article on the same rubric as the input; compute the quality delta |
-| **Summarize** | Write an editorial summary and pre-formatted Wikipedia edit summary with AI-assistance disclosure |
-| **Output** | Present the full proposal in the review UI |
-
-If critique fails, the agent revises (up to two cycles). If the output grade is lower than the input grade, the agent re-plans from scratch.
-
-![Agent loop diagram](docs/images/agent-loop.png)
-
----
-
-## 4. Architecture
-
-WikiWriter uses an **orchestrator / specialist worker** design. The orchestrator owns pipeline state, spawns workers, collects results, and makes routing decisions. Workers are stateless — each receives only the inputs it needs for its specific task and has no awareness of other workers or prior cycles. All inter-worker communication passes through the orchestrator.
-
-```
-┌─────────────────────────────────────┐
-│           ORCHESTRATOR              │
-│  Pipeline state · DAG execution     │
-│  Routing · Logging · Revision loops │
-└──────────────┬──────────────────────┘
-               │  spawns
-       ┌───────┴────────┐
-       ▼                ▼
-┌────────────┐   ┌────────────────┐
-│ SPECIALIST │   │  SPECIALIST    │
-│  WORKERS   │   │   WORKERS      │
-│ (stateless)│   │  (stateless)   │
-└────────────┘   └────────────────┘
-       │                │
-       └───────┬────────┘
-               ▼
-        ┌─────────────┐
-        │  TOOL LAYER │
-        │ Wikipedia · │
-        │ Web search  │
-        │ Wayback     │
-        │ HTTP fetch  │
-        └─────────────┘
-```
-
-**The DAG execution model.** The planner emits a machine-readable graph of task nodes. Each node specifies its worker type, parameters, and dependencies. The executor reads the DAG, launches all nodes whose dependencies are satisfied, and processes results as they arrive — naturally parallelizing independent work. A `research_section` node can run at the same time as another `research_section` node for a different section; `draft_section` nodes wait for their corresponding research to finish.
-
-This design means units of work are composable. Adding a new worker type (say, a contradiction analyzer) means adding a handler and a node type — the executor doesn't change.
-
-**Critic model.** The critique worker runs on a different model than the draft workers (configurable via `CRITIC_MODEL` env var). The reason is deliberate: two model families share different training data, RLHF tendencies, and systematic blind spots. A draft that reads as fluent and neutral to one model family may fail on another. This is risk mitigation, not a guarantee — but it is a meaningful structural improvement over self-critique.
-
-**No write access anywhere.** All network traffic is read-only: Wikipedia read API, source URLs, Tavily search, Wayback Machine CDX API. There is no MediaWiki write API call anywhere in the codebase. The agent cannot post to Wikipedia, cannot communicate outside the review interface, and cannot modify its own configuration.
-
----
-
-## 5. Key Technical Decisions
-
-**Source verification is a hard gate.** Every existing citation is fetched and read — not just checked for HTTP 200. The source evaluator reads the content and determines whether it actually supports the specific claim it is cited for. Dead links trigger a Wayback Machine lookup for the most recent archived version. If a source cannot be fetched and read, it is not recommended. This is the most expensive part of the pipeline and deliberately so.
-
-**Claim extraction before drafting.** Before any section is drafted, the claim extractor reads the section text and tags every factual claim as `cited`, `undercited`, `uncited`, or `consensus-uncited`. Consensus-uncited claims (basic historical dates, established scientific principles) are excluded from source discovery. Everything else queues for research. Draft writers receive this claim map as context — they know what needs sourcing before they write a word.
-
-**Editorial environment analysis.** The editorial context analyzer runs in parallel with the content grader on intake. It fetches the article's edit history and talk page, computes a 12-month revert rate, detects flip-flopped sections, identifies dominant editors, and extracts talk-page-imposed norms ("this article does not use X type of source per consensus in [archive]"). All of this feeds the planner. Sections with active flip-flop patterns are marked `DO NOT EDIT` by default.
-
-**Caching.** Every LLM call and every HTTP fetch is cached to disk, keyed on a hash of the prompt or URL. During development this means a run that has already fetched and graded a citation completes those steps instantly on retry. In the demo, it means the system can be shown running against real articles without burning API quota on repeated requests. Cache is never used across different prompts — the key is a hash of the full prompt text, so prompt changes invalidate the cache correctly.
-
----
-
-## 6. Tools Available to the Agent
-
-Workers are not LLM-only — they call a tool layer for all external data. Every tool call is logged and counted in the telemetry bar at the bottom of the UI. All tools are read-only; there is no write path in the codebase.
-
-| Tool | What it does |
-|---|---|
-| **`wikipedia`** | Fetches article wikitext, sections, and citations via the MediaWiki REST API. Also fetches edit history (timestamps, authors, edit comments) and the talk page for editorial context analysis. |
-| **`fetch`** | General-purpose web fetcher. Cleans HTML to readable text using BeautifulSoup. Falls back to headless Playwright for JavaScript-rendered pages and CAPTCHA-gated sites. Used by the source evaluator to read the actual content of every cited URL. |
-| **`search`** | Tavily web search API. Used by source discovery workers to find new sources for uncited or undercited claims. Returns structured results ranked for LLM evaluation. |
-| **`wayback`** | Wayback Machine CDX API lookup. Called automatically when `fetch` finds a dead URL — returns the most recent archived copy, if one exists. Lets the agent recover citations that are broken but historically valid. |
-| **`academic`** | Open-access PDF discovery for academic papers identified by DOI. Checks Unpaywall and Semantic Scholar for free full-text PDFs, and scans citation landing pages for PDF links. Falls back to local storage if a PDF has already been downloaded. |
-| **`pdf`** | Extracts readable text from a PDF (local path or URL) using pypdf. Called when a source is a PDF rather than an HTML page. Output is capped at 8,000 characters. |
-| **`diff`** | Generates a section-by-section diff between the original article and the proposed edit. Renders as annotated HTML (for the UI) with inline citation tracking — added and removed citations are shown alongside the changed text. |
-
-The fetch → wayback fallback chain is the most important: it means a citation is only marked `DEAD` after both the live URL and the Wayback Machine have been tried. The academic → pdf chain extends this to paywalled journal papers, where the DOI can often be resolved to a free full-text copy.
-
----
-
-## 7. Tradeoffs
-
-**Latency vs. quality.** WikiWriter does a lot of work per article: fetching and reading every citation, running parallel research, multiple LLM calls per section, a full critique pass. A run on a moderately complex article takes several minutes. This is a deliberate design choice — the alternative is to do less verification and produce worse edits. The caching layer makes development iteration fast; in production, the latency is the cost of the quality bar.
-
-**Reliability vs. ambition.** The real-world web is hostile: paywalls block source reads, CAPTCHAs block fetches, HTML is too messy for naive text extraction, rate limits hit under parallel load. The system handles these defensively — sources that can't be read are marked `DEAD` or `UNRESOLVABLE` and excluded from recommendations, never silently passed through. This means some runs produce fewer recommendations than the article deserves. That is the right failure mode.
-
-**Scope vs. safety.** WikiWriter deliberately does less than it could. The hard exclusion list (living persons, active political figures, medical claims, contested articles, articles under active dispute) is not configurable. The agent has no write access to Wikipedia. Every edit reaches Wikipedia manually, under a human account, with an AI-assistance disclosure tag. These constraints make the demo less impressive and the system more trustworthy. The two are related.
-
-**Critique model choice.** Using a different model for critique is principled — it surfaces failure modes the draft model is blind to. But it does not catch everything, and it introduces its own biases. A critique model that is systematically more conservative than the draft model will flag correct edits as NPOV violations. Calibrating the critic is an ongoing problem, not a solved one.
-
----
-
 ## 8. What I Would Do Next (With One More Day)
 
 **Broader research layer.** The current system assesses what is weak *in* the article. A more powerful version would first build a knowledge graph of the topic — what are the most important concepts, who are the key figures, what are the landmark papers or events — and then ask what is *missing* from the article relative to that graph. This would produce a qualitatively different kind of edit: not just fixing what is there, but identifying what should be there.
@@ -223,17 +221,3 @@ streamlit run app.py
 
 Paste a Wikipedia article URL, click **Analyse & draft edit**, and watch the agent work in real time. The sidebar shows the agent loop and task DAG as they evolve. The Run tab shows per-stage thinking and summaries. The Debug tab shows structured panels for each stage result.
 
----
-
-## Images
-
-Diagrams are generated by `scripts/generate_images.py` and written to `docs/images/`.
-
-| Image | Description |
-|---|---|
-| `docs/images/agent-loop.png` | The agent loop diagram shown in the Streamlit sidebar — pipeline stages with back-edges for the focus loop and critique/re-plan loop |
-| `docs/images/pipeline.png` | Full annotated pipeline flow with parallel gather fan-out and revision back-edges |
-| `docs/images/dag.png` | Example task DAG emitted by the planner for a two-section article |
-| `docs/images/context-diagram.png` | Positioning diagram: where WikiWriter sits relative to research agents and the open-source alignment problem |
-
-UI screenshots (`ui-run-tab.png`, `ui-debug-tab.png`) require a live run — capture manually with `streamlit run app.py`.
