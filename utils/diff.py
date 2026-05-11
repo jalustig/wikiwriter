@@ -202,6 +202,32 @@ def word_diff_ops(old: str, new: str) -> list[tuple[str, str]]:
     return ops
 
 
+_DARK_MODE_CSS = """
+<style>
+:root {
+  --diff-bg-equal:   #f8fafc; --diff-fg-equal:   inherit;
+  --diff-bg-insert:  #f5fff5; --diff-fg-insert:  inherit;
+  --diff-bg-delete:  #fff5f5; --diff-fg-delete:  #888;
+  --diff-bg-replace: #fafafa;
+  --diff-border:     #e2e8f0;
+  --word-del-bg:     #ffd7d5;
+  --word-ins-bg:     #d4edda;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --diff-bg-equal:   #1e2430; --diff-fg-equal:   #cbd5e1;
+    --diff-bg-insert:  #0d2318; --diff-fg-insert:  #86efac;
+    --diff-bg-delete:  #2d1414; --diff-fg-delete:  #fca5a5;
+    --diff-bg-replace: #1e2430;
+    --diff-border:     #334155;
+    --word-del-bg:     #5c1f1f;
+    --word-ins-bg:     #1a3d24;
+  }
+}
+</style>
+"""
+
+
 def paragraph_diff_html(old_para: str, new_para: str) -> str:
     """
     Render one paragraph pair as HTML: original on top, revised below.
@@ -211,16 +237,17 @@ def paragraph_diff_html(old_para: str, new_para: str) -> str:
         escaped = html.escape(new_para)
         return (
             "<div style='margin-bottom:14px;font-size:14px;line-height:1.7'>"
-            f"<div style='background:#f5fff5;padding:10px 14px;"
-            f"border-left:4px solid #66bb6a'>{escaped}</div>"
+            f"<div style='background:var(--diff-bg-insert);color:var(--diff-fg-insert);"
+            f"padding:10px 14px;border-left:4px solid #66bb6a'>{escaped}</div>"
             "</div>"
         )
     if not new_para:
         escaped = html.escape(old_para)
         return (
             "<div style='margin-bottom:14px;font-size:14px;line-height:1.7'>"
-            f"<div style='background:#fff5f5;padding:10px 14px;"
-            f"border-left:4px solid #e57373;text-decoration:line-through'>{escaped}</div>"
+            f"<div style='background:var(--diff-bg-delete);color:var(--diff-fg-delete);"
+            f"padding:10px 14px;border-left:4px solid #e57373;"
+            f"text-decoration:line-through'>{escaped}</div>"
             "</div>"
         )
 
@@ -233,12 +260,12 @@ def paragraph_diff_html(old_para: str, new_para: str) -> str:
             new_parts.append(escaped)
         elif tag == "delete":
             old_parts.append(
-                f"<span style='background:#ffd7d5;text-decoration:line-through;"
+                f"<span style='background:var(--word-del-bg);text-decoration:line-through;"
                 f"border-radius:2px;padding:0 2px'>{escaped}</span>"
             )
         elif tag == "insert":
             new_parts.append(
-                f"<span style='background:#d4edda;border-radius:2px;"
+                f"<span style='background:var(--word-ins-bg);border-radius:2px;"
                 f"padding:0 2px'>{escaped}</span>"
             )
 
@@ -246,10 +273,10 @@ def paragraph_diff_html(old_para: str, new_para: str) -> str:
     new_html = " ".join(new_parts)
     return (
         "<div style='margin-bottom:14px;font-size:14px;line-height:1.7'>"
-        f"<div style='background:#fff5f5;padding:10px 14px;"
-        f"border-left:4px solid #e57373;margin-bottom:3px'>{old_html}</div>"
-        f"<div style='background:#f5fff5;padding:10px 14px;"
-        f"border-left:4px solid #66bb6a'>{new_html}</div>"
+        f"<div style='background:var(--diff-bg-delete);color:var(--diff-fg-equal);"
+        f"padding:10px 14px;border-left:4px solid #e57373;margin-bottom:3px'>{old_html}</div>"
+        f"<div style='background:var(--diff-bg-insert);color:var(--diff-fg-equal);"
+        f"padding:10px 14px;border-left:4px solid #66bb6a'>{new_html}</div>"
         "</div>"
     )
 
@@ -265,19 +292,20 @@ def section_diff_html(original: str, revised: str) -> str:
     if not orig_paras and not rev_paras:
         return "<p><em>(empty)</em></p>"
     if not orig_paras:
-        return "".join(paragraph_diff_html("", p) for p in rev_paras)
+        return _DARK_MODE_CSS + "".join(paragraph_diff_html("", p) for p in rev_paras)
     if not rev_paras:
-        return "".join(paragraph_diff_html(p, "") for p in orig_paras)
+        return _DARK_MODE_CSS + "".join(paragraph_diff_html(p, "") for p in orig_paras)
 
     matcher = difflib.SequenceMatcher(None, orig_paras, rev_paras, autojunk=False)
-    blocks = []
+    blocks = [_DARK_MODE_CSS]
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             for p in orig_paras[i1:i2]:
                 escaped = html.escape(p)
                 blocks.append(
                     "<div style='margin-bottom:14px;font-size:14px;line-height:1.7;"
-                    f"padding:10px 14px;background:#fafafa;border-left:4px solid #ccc'>"
+                    f"padding:10px 14px;background:var(--diff-bg-replace);"
+                    f"color:var(--diff-fg-equal);border-left:4px solid var(--diff-border)'>"
                     f"{escaped}</div>"
                 )
         elif tag == "replace":

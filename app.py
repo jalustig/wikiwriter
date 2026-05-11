@@ -156,11 +156,17 @@ def render_output_stage(acc: dict) -> None:
         st.subheader("Download Final Article")
         # Store download data in session_state so download button can be rendered
         # outside run_and_render, avoiding a full page rerun that clears the UI.
+        dl_filename = f"{article_data.get('title', 'article').replace(' ', '_')}.wiki"
         st.session_state["wikitext_download"] = {
             "data": assembled,
-            "filename": f"{article_data.get('title', 'article').replace(' ', '_')}.wiki",
+            "filename": dl_filename,
         }
-        st.info("Wikitext ready — use the download button above the tabs.")
+        st.download_button(
+            label="⬇ Download wikitext",
+            data=assembled,
+            file_name=dl_filename,
+            mime="text/plain",
+        )
 
 
 def render_critique_panel(critique: CritiqueResult) -> None:

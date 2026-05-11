@@ -35,12 +35,12 @@ def _word_diff_inline(old_text: str, new_text: str) -> str:
             parts.append(escaped)
         elif tag == "delete":
             parts.append(
-                f"<span style='background:#ffd7d5;text-decoration:line-through;"
+                f"<span style='background:var(--word-del-bg);text-decoration:line-through;"
                 f"border-radius:2px;padding:0 2px'>{escaped}</span>"
             )
         elif tag == "insert":
             parts.append(
-                f"<span style='background:#d4edda;border-radius:2px;"
+                f"<span style='background:var(--word-ins-bg);border-radius:2px;"
                 f"padding:0 2px'>{escaped}</span>"
             )
     return " ".join(parts)
@@ -96,14 +96,47 @@ def _footnote_html(num: int, op: str, text: str, paired_text: str | None = None)
     strike = "text-decoration:line-through;opacity:.7;" if op == "delete" else ""
     return (
         f"<div style='margin-bottom:4px;font-size:12px;font-family:monospace;"
-        f"border-left:3px solid {border_color};padding:3px 8px;{strike}'>"
+        f"border-left:3px solid {border_color};padding:3px 8px;{strike}"
+        f"color:var(--diff-fg-equal)'>"
         f"<span style='font-weight:700;{text_color}'>[{num}]</span> {body}</div>"
     )
 
 
+_DARK_MODE_CSS = """
+<style>
+:root {
+  --diff-bg-equal:   #f8fafc; --diff-fg-equal:   inherit;
+  --diff-bg-insert:  #f5fff5; --diff-fg-insert:  inherit;
+  --diff-bg-delete:  #fff5f5; --diff-fg-delete:  #888;
+  --diff-bg-replace: #f8fafc; --diff-fg-replace: inherit;
+  --diff-bg-move:    #eff6ff; --diff-fg-move:    inherit;
+  --diff-meta:       #94a3b8;
+  --diff-border:     #e2e8f0;
+  --diff-cite-label: #64748b;
+  --word-del-bg:     #ffd7d5;
+  --word-ins-bg:     #d4edda;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --diff-bg-equal:   #1e2430; --diff-fg-equal:   #cbd5e1;
+    --diff-bg-insert:  #0d2318; --diff-fg-insert:  #86efac;
+    --diff-bg-delete:  #2d1414; --diff-fg-delete:  #fca5a5;
+    --diff-bg-replace: #1e2430; --diff-fg-replace: #cbd5e1;
+    --diff-bg-move:    #0f1d35; --diff-fg-move:    #93c5fd;
+    --diff-meta:       #64748b;
+    --diff-border:     #334155;
+    --diff-cite-label: #94a3b8;
+    --word-del-bg:     #5c1f1f;
+    --word-ins-bg:     #1a3d24;
+  }
+}
+</style>
+"""
+
+
 def _render_html(ops: list[tuple]) -> str:
     cite_nums = _assign_citation_numbers(ops)
-    blocks: list[str] = []
+    blocks: list[str] = [_DARK_MODE_CSS]
     footnotes: list[str] = []
     last_para = -1
     pending_inline: list[str] = []
@@ -113,7 +146,7 @@ def _render_html(ops: list[tuple]) -> str:
         if pending_inline:
             blocks.append(
                 "<div style='margin-bottom:6px;font-size:14px;line-height:1.7;"
-                "padding:8px 14px;background:#f8fafc'>"
+                "padding:8px 14px;background:var(--diff-bg-equal);color:var(--diff-fg-equal)'>"
                 + "".join(pending_inline) + "</div>"
             )
             pending_inline = []
@@ -123,7 +156,7 @@ def _render_html(ops: list[tuple]) -> str:
         if np >= 0 and np != last_para:
             flush()
             blocks.append(
-                f"<div style='font-size:11px;color:#94a3b8;margin:10px 0 4px;"
+                f"<div style='font-size:11px;color:var(--diff-meta);margin:10px 0 4px;"
                 f"text-transform:uppercase;letter-spacing:.06em'>"
                 f"¶ paragraph {np + 1}</div>"
             )
@@ -140,21 +173,27 @@ def _render_html(ops: list[tuple]) -> str:
             elif tag == "replace":
                 flush()
                 blocks.append(_sent_div(_word_diff_inline(old_tok.text, new_tok.text),
-                                        "#f8fafc", "#94a3b8"))
+                                        "var(--diff-bg-replace)", "var(--diff-meta)"))
             elif tag == "insert":
                 flush()
-                blocks.append(_sent_div(_html.escape(display.text), "#f5fff5", "#66bb6a"))
+                blocks.append(_sent_div(
+                    f"<span style='color:var(--diff-fg-insert)'>{_html.escape(display.text)}</span>",
+                    "var(--diff-bg-insert)", "#66bb6a"))
             elif tag == "delete":
                 flush()
-                blocks.append(_sent_div(_html.escape(display.text), "#fff5f5", "#e57373",
-                                        "text-decoration:line-through;color:#888"))
+                blocks.append(_sent_div(
+                    f"<span style='color:var(--diff-fg-delete)'>{_html.escape(display.text)}</span>",
+                    "var(--diff-bg-delete)", "#e57373",
+                    "text-decoration:line-through"))
             elif tag in ("move", "moved"):
                 flush()
                 label = (
-                    "<span style='font-size:11px;font-weight:600;color:#1d4ed8;"
+                    "<span style='font-size:11px;font-weight:600;color:var(--diff-fg-move);"
                     "text-transform:uppercase;letter-spacing:.05em'>↕ moved</span> "
                 )
-                blocks.append(_sent_div(label + _html.escape(display.text), "#eff6ff", "#3b82f6"))
+                blocks.append(_sent_div(
+                    label + f"<span style='color:var(--diff-fg-move)'>{_html.escape(display.text)}</span>",
+                    "var(--diff-bg-move)", "#3b82f6"))
         else:  # citation
             num = cite_nums.get(i, "?")
             flush()
@@ -179,8 +218,8 @@ def _render_html(ops: list[tuple]) -> str:
     result = "\n".join(blocks)
     if footnotes:
         result += (
-            "<div style='margin-top:20px;border-top:1px solid #e2e8f0;padding-top:12px'>"
-            "<div style='font-size:11px;font-weight:700;color:#64748b;"
+            "<div style='margin-top:20px;border-top:1px solid var(--diff-border);padding-top:12px'>"
+            "<div style='font-size:11px;font-weight:700;color:var(--diff-cite-label);"
             "text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px'>Citations</div>"
             + "\n".join(footnotes)
             + "</div>"
